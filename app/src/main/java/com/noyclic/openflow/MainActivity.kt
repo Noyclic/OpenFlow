@@ -226,7 +226,18 @@ class MainActivity : Activity() {
             }
         }
         gap(monitorCard, 8)
-        text(monitorCard, "Auto-continue sends your saved continuation prompt only after a stable completed response. A limit, error, CAPTCHA, restriction or uncertain screen stops it. Long-chat detection is an estimate and will pause for a handoff review.", 12f, "#9CADC2", false)
+        val autoHandoff = prefs.getBoolean("auto_handoff_enabled", false)
+        outlineButton(monitorCard, if (autoHandoff) "Disable automatic handoff" else "Enable automatic handoff") {
+            if (!prefs.getBoolean("automation_enabled", false)) {
+                toast("Start monitoring first.")
+            } else {
+                prefs.edit().putBoolean("auto_handoff_enabled", !autoHandoff).apply()
+                toast(if (autoHandoff) "Automatic handoff disabled." else "Automatic handoff enabled. Review the first transfer carefully.")
+                render()
+            }
+        }
+        gap(monitorCard, 8)
+        text(monitorCard, "Auto-continue sends your saved continuation prompt only after a stable completed response. Automatic handoff can request a summary, but it is experimental and depends on ChatGPT exposing message and New chat controls to Android Accessibility. A limit, error, CAPTCHA, restriction or uncertain screen stops automation.", 12f, "#9CADC2", false)
         gap(monitorCard, 8)
         text(monitorCard, "STATUS: ${prefs.getString("monitor_status", "Not started")}", 11f, "#69E4C5", true)
 
