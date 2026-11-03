@@ -33,11 +33,18 @@ class OpenFlowOverlayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action ?: ACTION_START) {
             ACTION_STOP -> {
+                pauseChatAutomation("Плавающая панель остановлена. Мониторинг ChatGPT выключен.")
                 stopSelf()
                 return START_NOT_STICKY
             }
-            ACTION_PAUSE -> paused = true
-            ACTION_RESUME -> paused = false
+            ACTION_PAUSE -> {
+                paused = true
+                pauseChatAutomation("Пауза с плавающей панели. Мониторинг ChatGPT выключен.")
+            }
+            ACTION_RESUME -> {
+                paused = false
+                state.edit().putString("monitor_status", "Панель возобновлена. Мониторинг ChatGPT запускается отдельно в настройках.").apply()
+            }
             ACTION_START -> paused = false
         }
         if (!Settings.canDrawOverlays(this)) {
@@ -48,6 +55,14 @@ class OpenFlowOverlayService : Service() {
         attachOrRefreshOverlay()
         state.edit().putBoolean("overlay_paused", paused).apply()
         return START_NOT_STICKY
+    }
+
+    private fun pauseChatAutomation(message: String) {
+        state.edit()
+            .putBoolean("automation_enabled", false)
+            .putBoolean("auto_continue_enabled", false)
+            .putString("monitor_status", message)
+            .apply()
     }
 
     private fun startAsForeground() {
@@ -156,7 +171,9 @@ class OpenFlowOverlayService : Service() {
             onStartCommand(Intent(this, OpenFlowOverlayService::class.java).setAction(next), 0, 0)
         }
         val stopButton = overlayButton("STOP", "#422D38", "#FFC0C8")
-        stopButton.setOnClickListener { stopSelf() }
+        stopButton.setOnClickListener {
+            onStartCommand(Intent(this, OpenFlowOverlayService::class.java).setAction(ACTION_STOP), 0, 0)
+        }
         actions.addView(pauseButton, LinearLayout.LayoutParams(0, dp(38), 1f))
         actions.addView(View(this), LinearLayout.LayoutParams(dp(8), 1))
         actions.addView(stopButton, LinearLayout.LayoutParams(0, dp(38), 1f))

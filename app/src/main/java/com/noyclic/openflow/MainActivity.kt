@@ -22,6 +22,9 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.noyclic.openflow.core.ContextHandoffFlow
+import com.noyclic.openflow.core.HandoffEvent
+import com.noyclic.openflow.core.HandoffStage
 
 class MainActivity : Activity() {
     private enum class Page { HOME, SETTINGS, HANDOFF, ACTIVITY }
@@ -153,13 +156,13 @@ class MainActivity : Activity() {
         gap(parent, 12)
         safetyRow(parent, "Usage-limit guard", "A reported limit must pause automation.", "ON")
         safetyRow(parent, "Unclear screen state", "Unknown states are treated as unsafe.", "ON")
-        safetyRow(parent, "Automatic message sending", "Not enabled in this prototype.", "OFF")
+        safetyRow(parent, "Automatic message sending", "Only after explicit opt-in in Settings.", "OPT-IN")
 
         gap(parent, 24)
         val note = card(parent, 15, "#111C2A", "#111C2A")
         text(note, "PROTOTYPE STATUS", 11f, "#69E4C5", true)
         gap(note, 6)
-        text(note, "ChatGPT monitoring and guarded scrolling are available after explicit Accessibility opt-in. Physical-device validation is still required. Automatic summary transfer, new-chat switching and reasoning-mode selection are not implemented.", 12f, "#9CADC2", false)
+        text(note, "ChatGPT monitoring, guarded scrolling and optional automatic summary requests are implemented. Review and transfer of the summary to a new chat remain manual. Physical-device validation is still required.", 12f, "#9CADC2", false)
         gap(parent, 24)
         navigation(parent, Page.HOME)
     }
@@ -225,6 +228,64 @@ class MainActivity : Activity() {
                 render()
             }
         }
+
+        gap(monitorCard, 8)
+        val autoHandoffRequest = prefs.getBoolean("auto_handoff_request_enabled", false)
+        outlineButton(
+            monitorCard,
+            if (autoHandoffRequest) "Disable automatic summary request" else "Enable automatic summary request"
+        ) {
+            prefs.edit().putBoolean("auto_handoff_request_enabled", !autoHandoffRequest).apply()
+            toast(if (autoHandoffRequest) "Automatic summary request disabled." else "At a detected long chat, OpenFlow may send one summary request.")
+            render()
+        }
+        gap(monitorCard, 6)
+        text(monitorCard, "This separate opt-in sends one structured summary request when the long-chat scan reaches its threshold. OpenFlow waits for a detected generation cycle, then pauses for you to review and copy the result. It does not automatically create a new chat or read/copy the whole summary.", 12f, "#9CADC2", false)
+        gap(monitorCard, 14)
+        sectionTitle(monitorCard, "Continuation prompt", "Used only when auto-continue is enabled.")
+        val continuationInput = EditText(this).apply {
+            setTextColor(color("#ECF4FF"))
+            setHintTextColor(color("#71839A"))
+            textSize = 13f
+            minLines = 3
+            maxLines = 5
+            gravity = Gravity.TOP or Gravity.START
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            setText(prefs.getString("continue_prompt", "Продолжай работу с того места, где остановился. Не повторяй уже выполненное.") ?: "")
+            setPadding(dp(13), dp(12), dp(13), dp(12))
+            background = rounded("#111C2A", "#2B4057", 12)
+        }
+        monitorCard.addView(continuationInput, LinearLayout.LayoutParams(-1, -2))
+        gap(monitorCard, 8)
+        outlineButton(monitorCard, "Save continuation prompt") {
+            val value = continuationInput.text?.toString()?.trim().orEmpty()
+            if (value.isBlank()) toast("Prompt cannot be empty.")
+            else {
+                prefs.edit().putString("continue_prompt", value).apply()
+                toast("Continuation prompt saved locally.")
+            }
+        }
+        gap(monitorCard, 14)
+        sectionTitle(monitorCard, "Long-chat threshold", "Unique text blocks found while scrolling.")
+        val thresholdInput = EditText(this).apply {
+            setTextColor(color("#ECF4FF"))
+            setHintTextColor(color("#71839A"))
+            textSize = 14f
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText(prefs.getInt("long_chat_threshold", 36).toString())
+            setPadding(dp(13), dp(12), dp(13), dp(12))
+            background = rounded("#111C2A", "#2B4057", 12)
+        }
+        monitorCard.addView(thresholdInput, LinearLayout.LayoutParams(-1, -2))
+        gap(monitorCard, 8)
+        outlineButton(monitorCard, "Save long-chat threshold") {
+            val value = thresholdInput.text?.toString()?.toIntOrNull()
+            if (value == null || value !in 8..200) toast("Choose a value from 8 to 200.")
+            else {
+                prefs.edit().putInt("long_chat_threshold", value).apply()
+                toast("Long-chat threshold saved.")
+            }
+        }
         gap(monitorCard, 8)
         text(monitorCard, "Auto-continue sends your saved prompt only after a stable completed response and a guarded scroll check. Long-chat detection is an estimate and pauses for a manual handoff. A limit, error, CAPTCHA, restriction, lost Accessibility service or uncertain screen stops automation.", 12f, "#9CADC2", false)
         gap(monitorCard, 8)
@@ -257,11 +318,20 @@ class MainActivity : Activity() {
         val intro = card(parent, 18, "#1A3850", "#18263B")
         text(intro, "A fresh chat.\nThe same progress.", 24f, "#F3F8FF", true)
         gap(intro, 8)
-        text(intro, "OpenFlow can monitor visible ChatGPT controls, but it does not collect or store the conversation for an automatic summary. Ask ChatGPT for a structured handoff, review it here, then carry it into a new chat.", 13f, "#B9CADD", false)
+        val stageValue = prefs.getString("handoff_stage", HandoffStage.IDLE.name) ?: HandoffStage.IDLE.name
+        val handoffStage = runCatching { HandoffStage.valueOf(stageValue) }.getOrDefault(HandoffStage.IDLE)
+        val stageDescription = when (handoffStage) {
+            HandoffStage.IDLE -> "No handoff is active. You can request a summary manually or enable the optional automatic request in Settings."
+            HandoffStage.MANUAL_REVIEW -> "Long chat detected. Prepare or review the summary, then paste it below."
+            HandoffStage.REQUESTING_SUMMARY -> "OpenFlow sent a summary request and is waiting for ChatGPT to finish. Review the result in ChatGPT."
+            HandoffStage.SUMMARY_READY -> "ChatGPT finished the summary request. Copy the answer from ChatGPT and paste it below."
+            HandoffStage.CONTEXT_COPIED -> "The handoff text was copied. Open a new chat manually and paste it there."
+        }
+        text(intro, stageDescription, 13f, "#B9CADD", false)
         gap(parent, 20)
         sectionTitle(parent, "Step 1 · Ask for a summary", "Copy this request into your current ChatGPT conversation.")
         gap(parent, 10)
-        val request = "Prepare a continuation handoff for this project. Include the goal, implemented work, important files and architecture, test results, known problems, decisions and constraints, and the single best next step. Be precise and do not claim unfinished work is complete."
+        val request = ContextHandoffFlow.SUMMARY_REQUEST_PROMPT
         val requestCard = card(parent, 16)
         text(requestCard, request, 13f, "#C0CEDF", false)
         gap(requestCard, 12)
@@ -287,13 +357,33 @@ class MainActivity : Activity() {
         actionButton(parent, "Copy handoff for new chat", "#65DFC1", "#09251F") {
             val value = editor.text?.toString()?.trim().orEmpty()
             if (value.isBlank()) toast("Paste a handoff summary first.")
-            else copyText("OpenFlow project handoff",
-                "Continue from this project handoff. Verify repository state before editing and preserve the listed constraints.\n\n$value")
+            else {
+                copyText("OpenFlow project handoff",
+                    "Continue from this project handoff. Verify repository state before editing and preserve the listed constraints.\n\n$value")
+                val currentStage = runCatching {
+                    HandoffStage.valueOf(prefs.getString("handoff_stage", HandoffStage.IDLE.name) ?: HandoffStage.IDLE.name)
+                }.getOrDefault(HandoffStage.IDLE)
+                prefs.edit().putString(
+                    "handoff_stage",
+                    ContextHandoffFlow.transition(currentStage, HandoffEvent.CONTEXT_COPIED).name
+                ).apply()
+            }
         }
+
         gap(parent, 9)
         outlineButton(parent, "Open ChatGPT") { openChatGPT() }
         gap(parent, 8)
-        text(parent, "This screen does not upload or save your text. Clipboard copying happens only when you tap a button. Opening ChatGPT returns you to its app; choose the target conversation or create a new chat yourself.", 12f, "#778BA3", false)
+        outlineButton(parent, "Reset handoff status") {
+            prefs.edit()
+                .putString("handoff_stage", HandoffStage.IDLE.name)
+                .putBoolean("handoff_required", false)
+                .putBoolean("handoff_summary_generation_seen", false)
+                .apply()
+            toast("Handoff state reset.")
+            render()
+        }
+        gap(parent, 8)
+        text(parent, "OpenFlow does not upload or save the pasted summary. Clipboard copying happens only when you tap a button. After opening ChatGPT, create a new chat yourself and paste the copied handoff.", 12f, "#778BA3", false)
         gap(parent, 24)
         navigation(parent, Page.HANDOFF)
     }
@@ -315,7 +405,10 @@ class MainActivity : Activity() {
         val continuing = prefs.getBoolean("auto_continue_enabled", false)
         settingRow(parent, "Auto-continue", "Optional message continuation", if (continuing) "ON" else "OFF", continuing)
         divider(parent)
-        settingRow(parent, "Context handoff", "Summary and new-chat transfer", "MANUAL", false)
+        val storedStage = prefs.getString("handoff_stage", HandoffStage.IDLE.name) ?: HandoffStage.IDLE.name
+        val stage = runCatching { HandoffStage.valueOf(storedStage) }.getOrDefault(HandoffStage.IDLE)
+        settingRow(parent, "Context handoff", "Current stage: " + stage.name.lowercase().replace('_', ' '),
+            if (stage == HandoffStage.SUMMARY_READY) "READY" else "MANUAL", stage == HandoffStage.SUMMARY_READY)
         gap(parent, 24)
         navigation(parent, Page.ACTIVITY)
     }

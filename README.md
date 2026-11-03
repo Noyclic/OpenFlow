@@ -38,12 +38,13 @@ The first test device is a **Redmi Note 13 4G running Android 15**.
 | Opt-in ChatGPT accessibility observer | Implemented; device testing required |
 | Response-completion and safety-state detection | Implemented heuristically |
 | Opt-in auto-continue after a stable response | Implemented; device testing required |
-| Long-chat detection | Experimental estimate; pauses for review |
-| Automatic new-chat handoff | Not implemented |
+| Long-chat detection | Approximate; counts distinct visible text fingerprints across bounded scroll scan |
+| One-shot automatic summary request | Optional explicit opt-in; waits for response and pauses for review |
+| Automatic new-chat handoff | Manual review, clipboard copy and app launch; new-chat selection/injection still manual |
 | ChatGPT reasoning-mode selection | Not controllable reliably by an external app; select manually |
 | AI provider/API integration | Not implemented |
 
-When you explicitly enable the ChatGPT accessibility service in Android Settings, OpenFlow observes the active ChatGPT app accessibility tree locally. It does not capture screenshots or upload conversation text. Auto-continue is a separate opt-in switch and sends a saved continuation prompt only after a stable completion signal. Long-chat detection is heuristic and currently pauses for a manual handoff. Automatic new-chat creation and context injection are still planned.
+When you explicitly enable the ChatGPT accessibility service in Android Settings, OpenFlow observes the active ChatGPT app accessibility tree locally. It does not capture screenshots or upload conversation text. Auto-continue is a separate opt-in switch and sends a saved continuation prompt only after a stable completion signal. Long-chat detection is heuristic and counts distinct text-block fingerprints across the scroll scan. If you separately enable automatic summary requests, OpenFlow sends one structured request at the threshold, waits for a detected generation cycle and then pauses for manual review. It does not copy the assistant's summary text, create a new chat or inject the handoff automatically; those steps remain manual until the ChatGPT Android selectors can be verified on the target device.
 
 ## First run
 
@@ -51,7 +52,7 @@ When you explicitly enable the ChatGPT accessibility service in Android Settings
 2. Open OpenFlow and tap **Launch floating assistant**.
 3. Grant **Display over other apps** when Android asks.
 4. Grant notification permission when prompted, then tap Launch again.
-5. Use the floating panel to pause, resume or stop it. You can also stop it from the ongoing notification.
+5. Use the floating panel to pause, resume or stop it. Pause/stop also disables ChatGPT monitoring; resume the monitor separately from Settings. You can also stop the panel from the ongoing notification.
 
 Android or the device manufacturer may restrict overlays and foreground services based on system settings and battery management.
 
@@ -74,7 +75,7 @@ GitHub Actions runs unit tests and builds a debug APK on pushes to `main`, pull 
 2. **Fail closed.** Limits, errors, access restrictions, CAPTCHA challenges and unknown states must stop automation.
 3. **No limit evasion.** Never rotate accounts, reset quotas, bypass CAPTCHAs or defeat service restrictions.
 4. **Privacy by default.** Accessibility inspection stays on-device; no screenshots or conversation uploads.
-5. **Explicit opt-in.** Auto-continue is off until enabled by the user.
+5. **Explicit opt-in.** Auto-continue and automatic summary requests are off until separately enabled by the user.
 6. **Honest feature states.** Heuristic detection and unfinished handoff features are clearly labelled.
 
 ## Roadmap and privacy

@@ -11,7 +11,7 @@ OpenFlow is designed around visible, user-controlled Android workflows. Accessib
 
 ## Screen and conversation content
 
-Accessibility inspection is restricted to the ChatGPT Android package. It is processed on-device. OpenFlow does not capture screenshots, use the camera or microphone, or upload conversation text. Conversation text is not retained as a history by the monitor. A continuation prompt is entered only when the user separately enables auto-continue.
+Accessibility inspection is restricted to the ChatGPT Android package. It is processed on-device. OpenFlow does not capture screenshots, use the camera or microphone, or upload conversation text. Conversation text is not retained as a history by the monitor. A continuation prompt is entered only when the user separately enables auto-continue. A structured summary request can also be sent once at the long-chat threshold, but only after a separate explicit opt-in. The monitor keeps short fingerprints of distinct visible text blocks in memory while scanning; it does not retain their message bodies as a history.
 
 The accessibility service is powerful Android access. Enable it only if you understand and want the described behavior. You can disable it at any time in Android Accessibility settings.
 
@@ -20,7 +20,8 @@ The accessibility service is powerful Android access. Enable it only if you unde
 - A usage limit, CAPTCHA, access restriction, service error or unknown state pauses automation.
 - OpenFlow never rotates accounts, refreshes to evade a quota, bypasses CAPTCHA, or defeats service restrictions.
 - Auto-continue is off by default and has a per-session cap.
-- Long-chat detection is approximate. The current version pauses for a manual handoff; it does not silently create a new chat.
+- Long-chat detection is approximate and based on visible text blocks discovered during a bounded scroll scan.
+- The optional summary-request switch sends one message when that estimate reaches its threshold. It waits for a detected generation cycle and pauses for manual review; it does not automatically copy the response, create a new chat or inject the handoff.
 - Keep status and a stop control visible.
 
 ## Reasoning mode

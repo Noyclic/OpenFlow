@@ -24,7 +24,8 @@ A checked item means code exists in the repository. It does not imply that the f
 - [x] Prefer a nested, visible scroll container that contains conversation text.
 - [ ] Validate scroll container selection and bottom detection on the physical device.
 - [ ] Validate selectors and false-positive rate on the physical device.
-- [ ] Improve message-count and long-chat estimation.
+- [x] Count distinct message-text fingerprints across the bounded scroll scan (fingerprints only; message bodies are not retained).
+- [ ] Verify long-chat estimation against real ChatGPT conversations on device.
 
 ## Phase 3 — Controlled continuation
 - [x] Explicit user switch for auto-continue.
@@ -32,14 +33,17 @@ A checked item means code exists in the repository. It does not imply that the f
 - [x] Duplicate-response guard and 25-message session cap.
 - [x] Require an enabled, clickable send control before considering a response complete.
 - [ ] Verify composer and send-button selectors on current ChatGPT Android UI.
-- [ ] Add configurable continuation prompt and session controls.
+- [x] Add locally saved continuation prompt and configurable long-chat threshold.
+- [ ] Verify composer and send-button selectors on current ChatGPT Android UI.
 
 ## Phase 4 — Context handoff
 - [x] Manual handoff request and clipboard workspace.
-- [ ] Automatically ask ChatGPT for a structured handoff summary; current workflow copies the request and opens ChatGPT for a manual send.
-- [ ] Extract and review the summary before moving chats.
+- [x] Optional one-shot automatic summary request after a long-chat scan (explicit opt-in).
+- [x] Wait for an observed generation cycle and pause when the summary request appears complete.
+- [ ] Extract the assistant summary text reliably; current version asks the user to copy it from ChatGPT and paste it into the handoff workspace.
 - [x] Provide a manual Open ChatGPT shortcut from the handoff workspace.
-- [ ] Assist with opening a new chat and injecting the handoff.
+- [x] Copy the reviewed handoff prompt to clipboard and open ChatGPT.
+- [ ] Create a new chat and inject the handoff automatically; requires verified selectors and a real-device test.
 - [ ] Recover safely when ChatGPT UI selectors change.
 
 ## Phase 5 — Reasoning preference
