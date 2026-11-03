@@ -365,6 +365,7 @@ class MainActivity : Activity() {
             setPadding(dp(15), dp(14), dp(15), dp(14))
             background = rounded("#111C2A", "#2B4057", 14)
             isVerticalScrollBarEnabled = true
+            setText(prefs.getString("handoff_pending_summary", "") ?: "")
         }
         parent.addView(editor, LinearLayout.LayoutParams(-1, -2))
         gap(parent, 12)

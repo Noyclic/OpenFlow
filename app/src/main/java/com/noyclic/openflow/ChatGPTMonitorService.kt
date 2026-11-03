@@ -52,6 +52,8 @@ class ChatGPTMonitorService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.packageName?.toString() != CHATGPT_PACKAGE) return
         if (!state.getBoolean("automation_enabled", false)) return
+        // Ignore intermediate UI events while the handoff state machine owns the screen.
+        if (handoffStage() == HandoffStage.TRANSFERRING) return
         val root = rootInActiveWindow ?: return
         val snapshot = inspect(root)
         val signal = snapshot.signal()
@@ -400,6 +402,7 @@ class ChatGPTMonitorService : AccessibilityService() {
      */
     private fun startAutomaticHandoff(root: AccessibilityNodeInfo) {
         val summary = extractLatestSummary(root)
+        state.edit().putString("handoff_pending_summary", summary).apply()
         if (summary.length < MIN_HANDOFF_SUMMARY_CHARS) {
             failAutomaticHandoff("Не удалось надёжно прочитать сводку с экрана. Перенос остановлен; проверь ответ вручную.")
             return
