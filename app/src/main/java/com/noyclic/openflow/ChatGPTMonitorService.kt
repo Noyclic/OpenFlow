@@ -490,9 +490,10 @@ class ChatGPTMonitorService : AccessibilityService() {
     }
 
     private fun finishSeekLatest(pause: Boolean) {
+        val attemptedFingerprint = lastScrollFingerprint
         cancelSeekLatest()
         if (pause) {
-            lastUncertainFingerprint = lastScrollFingerprint
+            lastUncertainFingerprint = attemptedFingerprint
             messageScan.reset()
             state.edit()
                 .putBoolean("auto_continue_enabled", false)
@@ -504,7 +505,7 @@ class ChatGPTMonitorService : AccessibilityService() {
         }
         val root = findChatGptRoot()
         if (root == null) {
-            lastUncertainFingerprint = lastScrollFingerprint
+            lastUncertainFingerprint = attemptedFingerprint
             state.edit()
                 .putBoolean("auto_continue_enabled", false)
                 .putString("monitor_status", "Окно ChatGPT временно недоступно. Наблюдение продолжается без автодействий.")
