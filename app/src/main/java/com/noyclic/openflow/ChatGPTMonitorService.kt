@@ -364,12 +364,16 @@ class ChatGPTMonitorService : AccessibilityService() {
             cancelHandoffTimeout()
             if (state.getBoolean("handoff_summary_generation_seen", false)) {
                 transitionHandoff(HandoffEvent.SUMMARY_RESPONSE_COMPLETED)
-                state.edit()
-                    .putBoolean("automation_enabled", false)
-                    .putBoolean("auto_continue_enabled", false)
-                    .putString("monitor_status", "Сводка готова. Проверь её и перенеси в новый чат вручную.")
-                    .apply()
-                showStatusNotification("Сводка готова. Проверь её в ChatGPT и перенеси в новый чат.")
+                if (state.getBoolean("auto_handoff_transfer_enabled", false)) {
+                    startAutomaticHandoff(root)
+                } else {
+                    state.edit()
+                        .putBoolean("automation_enabled", false)
+                        .putBoolean("auto_continue_enabled", false)
+                        .putString("monitor_status", "Сводка готова. Проверь её и перенеси в новый чат вручную.")
+                        .apply()
+                    showStatusNotification("Сводка готова. Проверь её в ChatGPT и перенеси в новый чат.")
+                }
             } else {
                 transitionHandoff(HandoffEvent.SUMMARY_REQUEST_FAILED)
                 state.edit()
@@ -387,6 +391,137 @@ class ChatGPTMonitorService : AccessibilityService() {
             latest.fingerprint != lastAutoSentFingerprint) {
             scheduleContinue(latest.fingerprint)
         }
+    }
+
+    /**
+     * Opt-in handoff: extract the newest visible summary, open a clearly labelled
+     * new-chat action, verify that the old summary is no longer on screen, then
+     * place the handoff into the new composer. Any uncertain step pauses automation.
+     */
+    private fun startAutomaticHandoff(root: AccessibilityNodeInfo) {
+        val summary = extractLatestSummary(root)
+        if (summary.length < MIN_HANDOFF_SUMMARY_CHARS) {
+            failAutomaticHandoff("Не удалось надёжно прочитать сводку с экрана. Перенос остановлен; проверь ответ вручную.")
+            return
+        }
+        val newChat = findNewChatAction(root)
+        if (newChat == null) {
+            failAutomaticHandoff("Не нашёл кнопку «Новый чат». Сводка сохранена локально; открой новый чат вручную.")
+            state.edit().putString("handoff_pending_summary", summary).apply()
+            return
+        }
+        state.edit()
+            .putString("handoff_pending_summary", summary)
+            .putString("monitor_status", "Сводка прочитана. Открываю новый чат…")
+            .apply()
+        transitionHandoff(HandoffEvent.AUTO_TRANSFER_STARTED)
+        if (!newChat.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            failAutomaticHandoff("Не удалось нажать «Новый чат». Сводка сохранена для ручного переноса.")
+            return
+        }
+        handler.postDelayed({
+            if (!state.getBoolean("automation_enabled", false)) {
+                failAutomaticHandoff("Автоматизация была остановлена до открытия нового чата.")
+                return@postDelayed
+            }
+            val newRoot = rootInActiveWindow
+            if (newRoot == null) {
+                failAutomaticHandoff("Не удалось проверить экран нового чата.")
+                return@postDelayed
+            }
+            val visibleText = inspect(newRoot).text
+            if (visibleText.contains(summary.take(100), ignoreCase = true)) {
+                failAutomaticHandoff("Экран не изменился после нажатия. Не отправляю контекст, чтобы не продублировать его в старом чате.")
+                return@postDelayed
+            }
+            val input = findEditable(newRoot)
+            if (input == null || !input.performAction(AccessibilityNodeInfo.ACTION_FOCUS)) {
+                failAutomaticHandoff("Новый чат открылся, но поле ввода не найдено. Сводка сохранена локально.")
+                return@postDelayed
+            }
+            val handoffMessage = "Продолжаем предыдущую задачу. Ниже проверенная сводка предыдущего чата. Сначала прочитай её целиком, затем продолжай с указанного следующего шага. Не утверждай, что незавершённая работа уже выполнена.\n\n$summary"
+            val args = Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, handoffMessage)
+            }
+            if (!input.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
+                failAutomaticHandoff("Не удалось вставить сводку в новый чат. Текст сохранён в OpenFlow.")
+                return@postDelayed
+            }
+            handler.postDelayed({
+                val sendRoot = rootInActiveWindow
+                val sendButton = sendRoot?.let(::findSendButton)
+                if (sendButton == null || !sendButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    clearComposer(input)
+                    failAutomaticHandoff("Текст вставлен, но кнопку отправки не удалось безопасно определить. Отправь его вручную.")
+                    return@postDelayed
+                }
+                transitionHandoff(HandoffEvent.AUTO_TRANSFER_COMPLETED)
+                state.edit()
+                    .putBoolean("handoff_required", false)
+                    .putBoolean("handoff_summary_generation_seen", false)
+                    .putBoolean("auto_continue_enabled", false)
+                    .remove("handoff_pending_summary")
+                    .putString("monitor_status", "Контекст отправлен в новый чат. Ожидаю ответ ChatGPT…")
+                    .apply()
+                lastScannedFingerprint = null
+                lastAutoSentFingerprint = null
+                messageScan.reset()
+                showStatusNotification("Контекст перенесён в новый чат. OpenFlow продолжает наблюдение.")
+            }, NEW_CHAT_COMPOSER_SETTLE_MS)
+        }, NEW_CHAT_SETTLE_MS)
+    }
+
+    private fun extractLatestSummary(root: AccessibilityNodeInfo): String {
+        val blocks = ArrayList<String>()
+        val seen = HashSet<String>()
+        fun visit(node: AccessibilityNodeInfo?, depth: Int) {
+            if (node == null || depth > 24 || blocks.size >= 100) return
+            val value = node.text?.toString()?.trim().orEmpty()
+            if (!node.isEditable && node.isVisibleToUser && value.length >= 80) {
+                val normalized = value.lowercase().replace(Regex("\\s+"), " ").trim()
+                val isOurPrompt = normalized.contains("prepare a complete continuation handoff") ||
+                    normalized.contains("подготовь полный контекст для продолжения") ||
+                    normalized.contains("continue from this project handoff")
+                if (!isOurPrompt && seen.add(normalized)) blocks += value
+            }
+            for (i in 0 until node.childCount) visit(node.getChild(i), depth + 1)
+        }
+        visit(root, 0)
+        return blocks.takeLast(MAX_HANDOFF_TEXT_BLOCKS).joinToString("\n\n")
+            .takeLast(MAX_HANDOFF_SUMMARY_CHARS)
+            .trim()
+    }
+
+    private fun findNewChatAction(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val labels = setOf(
+            "new chat", "new conversation", "start a new chat",
+            "новый чат", "новый диалог", "создать чат", "начать новый чат"
+        )
+        var match: AccessibilityNodeInfo? = null
+        fun visit(node: AccessibilityNodeInfo?, depth: Int) {
+            if (node == null || depth > 24 || match != null) return
+            val label = ((node.text?.toString().orEmpty()) + " " +
+                (node.contentDescription?.toString().orEmpty()))
+                .lowercase().replace(Regex("\\s+"), " ").trim()
+            if (node.isVisibleToUser && node.isEnabled && label in labels) {
+                match = if (node.isClickable) node else node.parent?.takeIf { it.isClickable && it.isEnabled }
+            }
+            for (i in 0 until node.childCount) visit(node.getChild(i), depth + 1)
+        }
+        visit(root, 0)
+        return match
+    }
+
+    private fun failAutomaticHandoff(reason: String) {
+        if (handoffStage() == HandoffStage.TRANSFERRING) {
+            transitionHandoff(HandoffEvent.AUTO_TRANSFER_FAILED)
+        }
+        state.edit()
+            .putBoolean("automation_enabled", false)
+            .putBoolean("auto_continue_enabled", false)
+            .putString("monitor_status", reason)
+            .apply()
+        showStatusNotification(reason)
     }
 
     private fun scheduleContinue(fingerprint: String) {
@@ -558,5 +693,10 @@ class ChatGPTMonitorService : AccessibilityService() {
         private const val DEFAULT_LONG_CHAT_THRESHOLD = 36
         private const val MAX_AUTO_CONTINUES = 25
         private const val HANDOFF_TIMEOUT_MS = 180_000L
+        private const val NEW_CHAT_SETTLE_MS = 1_100L
+        private const val NEW_CHAT_COMPOSER_SETTLE_MS = 450L
+        private const val MIN_HANDOFF_SUMMARY_CHARS = 240
+        private const val MAX_HANDOFF_SUMMARY_CHARS = 12_000
+        private const val MAX_HANDOFF_TEXT_BLOCKS = 12
     }
 }

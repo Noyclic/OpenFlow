@@ -240,7 +240,19 @@ class MainActivity : Activity() {
             render()
         }
         gap(monitorCard, 6)
-        text(monitorCard, "This separate opt-in sends one structured summary request when the long-chat scan reaches its threshold. OpenFlow waits for a detected generation cycle, then pauses for you to review and copy the result. It does not automatically create a new chat or read/copy the whole summary.", 12f, "#9CADC2", false)
+        text(monitorCard, "This opt-in sends one structured summary request when the long-chat scan reaches its threshold.", 12f, "#9CADC2", false)
+        gap(monitorCard, 10)
+        val autoTransfer = prefs.getBoolean("auto_handoff_transfer_enabled", false)
+        outlineButton(
+            monitorCard,
+            if (autoTransfer) "Disable automatic new-chat transfer" else "Enable automatic new-chat transfer"
+        ) {
+            prefs.edit().putBoolean("auto_handoff_transfer_enabled", !autoTransfer).apply()
+            toast(if (autoTransfer) "Automatic new-chat transfer disabled." else "OpenFlow may read the visible summary, open a labelled new chat and send the handoff. It pauses if any step is uncertain.")
+            render()
+        }
+        gap(monitorCard, 6)
+        text(monitorCard, "For a full automatic cycle, enable both switches. Transfer is a separate opt-in: OpenFlow reads visible accessibility text locally, looks for an explicitly labelled New chat button, verifies the screen changed, then inserts and sends the summary. If a selector or screen check is uncertain, it pauses and keeps the summary for manual recovery. Reasoning mode still must be selected manually.", 12f, "#9CADC2", false)
         gap(monitorCard, 14)
         sectionTitle(monitorCard, "Continuation prompt", "Used only when auto-continue is enabled.")
         val continuationInput = EditText(this).apply {
@@ -324,7 +336,9 @@ class MainActivity : Activity() {
             HandoffStage.IDLE -> "No handoff is active. You can request a summary manually or enable the optional automatic request in Settings."
             HandoffStage.MANUAL_REVIEW -> "Long chat detected. Prepare or review the summary, then paste it below."
             HandoffStage.REQUESTING_SUMMARY -> "OpenFlow sent a summary request and is waiting for ChatGPT to finish. Review the result in ChatGPT."
-            HandoffStage.SUMMARY_READY -> "ChatGPT finished the summary request. Copy the answer from ChatGPT and paste it below."
+            HandoffStage.SUMMARY_READY -> "The summary is ready. Automatic transfer is off or needs manual recovery."
+            HandoffStage.TRANSFERRING -> "OpenFlow is opening a new chat and transferring the summary."
+            HandoffStage.COMPLETED -> "The summary was sent to a new chat. Open ChatGPT to verify it."
             HandoffStage.CONTEXT_COPIED -> "The handoff text was copied. Open a new chat manually and paste it there."
         }
         text(intro, stageDescription, 13f, "#B9CADD", false)
@@ -408,7 +422,8 @@ class MainActivity : Activity() {
         val storedStage = prefs.getString("handoff_stage", HandoffStage.IDLE.name) ?: HandoffStage.IDLE.name
         val stage = runCatching { HandoffStage.valueOf(storedStage) }.getOrDefault(HandoffStage.IDLE)
         settingRow(parent, "Context handoff", "Current stage: " + stage.name.lowercase().replace('_', ' '),
-            if (stage == HandoffStage.SUMMARY_READY) "READY" else "MANUAL", stage == HandoffStage.SUMMARY_READY)
+            if (stage == HandoffStage.SUMMARY_READY || stage == HandoffStage.TRANSFERRING || stage == HandoffStage.COMPLETED) "READY" else "MANUAL",
+            stage == HandoffStage.SUMMARY_READY || stage == HandoffStage.TRANSFERRING || stage == HandoffStage.COMPLETED)
         gap(parent, 24)
         navigation(parent, Page.ACTIVITY)
     }

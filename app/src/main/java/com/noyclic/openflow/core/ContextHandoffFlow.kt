@@ -1,7 +1,10 @@
 package com.noyclic.openflow.core
 
-enum class HandoffStage { IDLE, MANUAL_REVIEW, REQUESTING_SUMMARY, SUMMARY_READY, CONTEXT_COPIED }
-enum class HandoffEvent { LONG_CHAT_DETECTED, SUMMARY_REQUEST_SENT, SUMMARY_RESPONSE_COMPLETED, SUMMARY_REQUEST_FAILED, CONTEXT_COPIED, RESET }
+enum class HandoffStage { IDLE, MANUAL_REVIEW, REQUESTING_SUMMARY, SUMMARY_READY, TRANSFERRING, COMPLETED, CONTEXT_COPIED }
+enum class HandoffEvent {
+    LONG_CHAT_DETECTED, SUMMARY_REQUEST_SENT, SUMMARY_RESPONSE_COMPLETED, SUMMARY_REQUEST_FAILED,
+    AUTO_TRANSFER_STARTED, AUTO_TRANSFER_COMPLETED, AUTO_TRANSFER_FAILED, CONTEXT_COPIED, RESET
+}
 
 object ContextHandoffFlow {
     const val SUMMARY_REQUEST_PROMPT =
@@ -10,13 +13,19 @@ object ContextHandoffFlow {
     fun transition(stage: HandoffStage, event: HandoffEvent): HandoffStage = when (event) {
         HandoffEvent.RESET -> HandoffStage.IDLE
         HandoffEvent.LONG_CHAT_DETECTED ->
-            if (stage == HandoffStage.IDLE || stage == HandoffStage.CONTEXT_COPIED) HandoffStage.MANUAL_REVIEW else stage
+            if (stage == HandoffStage.IDLE || stage == HandoffStage.CONTEXT_COPIED || stage == HandoffStage.COMPLETED) HandoffStage.MANUAL_REVIEW else stage
         HandoffEvent.SUMMARY_REQUEST_SENT ->
             if (stage == HandoffStage.MANUAL_REVIEW) HandoffStage.REQUESTING_SUMMARY else stage
         HandoffEvent.SUMMARY_RESPONSE_COMPLETED ->
             if (stage == HandoffStage.REQUESTING_SUMMARY) HandoffStage.SUMMARY_READY else stage
         HandoffEvent.SUMMARY_REQUEST_FAILED ->
             if (stage == HandoffStage.REQUESTING_SUMMARY) HandoffStage.MANUAL_REVIEW else stage
+        HandoffEvent.AUTO_TRANSFER_STARTED ->
+            if (stage == HandoffStage.SUMMARY_READY) HandoffStage.TRANSFERRING else stage
+        HandoffEvent.AUTO_TRANSFER_COMPLETED ->
+            if (stage == HandoffStage.TRANSFERRING) HandoffStage.COMPLETED else stage
+        HandoffEvent.AUTO_TRANSFER_FAILED ->
+            if (stage == HandoffStage.TRANSFERRING) HandoffStage.SUMMARY_READY else stage
         HandoffEvent.CONTEXT_COPIED ->
             if (stage == HandoffStage.SUMMARY_READY || stage == HandoffStage.MANUAL_REVIEW) HandoffStage.CONTEXT_COPIED else stage
     }

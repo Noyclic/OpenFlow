@@ -39,12 +39,13 @@ The first test device is a **Redmi Note 13 4G running Android 15**.
 | Response-completion and safety-state detection | Implemented heuristically |
 | Opt-in auto-continue after a stable response | Implemented; device testing required |
 | Long-chat detection | Approximate; counts distinct visible text fingerprints across bounded scroll scan |
-| One-shot automatic summary request | Optional explicit opt-in; waits for response and pauses for review |
-| Automatic new-chat handoff | Manual review, clipboard copy and app launch; new-chat selection/injection still manual |
+| One-shot automatic summary request | Optional explicit opt-in; waits for response |
+| Automatic new-chat handoff | Separate opt-in; reads visible summary text, finds an explicitly labelled New chat action, verifies the screen change, inserts and sends context; device UI selectors require validation |
+
 | ChatGPT reasoning-mode selection | Not controllable reliably by an external app; select manually |
 | AI provider/API integration | Not implemented |
 
-When you explicitly enable the ChatGPT accessibility service in Android Settings, OpenFlow observes the active ChatGPT app accessibility tree locally. It does not capture screenshots or upload conversation text. Auto-continue is a separate opt-in switch and sends a saved continuation prompt only after a stable completion signal. Long-chat detection is heuristic and counts distinct text-block fingerprints across the scroll scan. If you separately enable automatic summary requests, OpenFlow sends one structured request at the threshold, waits for a detected generation cycle and then pauses for manual review. It does not copy the assistant's summary text, create a new chat or inject the handoff automatically; those steps remain manual until the ChatGPT Android selectors can be verified on the target device.
+When you explicitly enable the ChatGPT accessibility service in Android Settings, OpenFlow observes the active ChatGPT app accessibility tree locally. It does not capture screenshots or upload conversation text. Auto-continue is a separate opt-in switch and sends a saved continuation prompt only after a stable completion signal. Long-chat detection is heuristic and counts distinct text-block fingerprints across the scroll scan. If you separately enable automatic summary requests, OpenFlow sends one structured request at the threshold, waits for a detected generation cycle and then pauses for manual review. A second, separate opt-in can attempt to read the visible summary, activate a clearly labelled New chat control, verify that the old summary is no longer visible, and send the handoff into the new composer. This UI-driven transfer is heuristic and must be validated on the target device; if any step is uncertain, OpenFlow pauses and retains the summary locally for manual recovery. Reasoning-mode selection remains manual.
 
 ## First run
 
