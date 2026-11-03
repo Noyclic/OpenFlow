@@ -200,7 +200,7 @@ class ChatGPTMonitorService : AccessibilityService() {
             for (i in 0 until node.childCount) visit(node.getChild(i), depth + 1)
         }
         visit(root, 0)
-        return ScreenSnapshot(texts.joinToString("\\n"), stop, send, messageKeys.size, messageKeys, composer)
+        return ScreenSnapshot(texts.joinToString("\n"), stop, send, messageKeys.size, messageKeys, composer)
     }
 
     /**
@@ -813,9 +813,14 @@ class ChatGPTMonitorService : AccessibilityService() {
     private fun findSendButton(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val label = ((node.text?.toString().orEmpty()) + " " +
             (node.contentDescription?.toString().orEmpty())).trim().lowercase()
-        val match = label == "send" || label == "send message" || label == "send prompt" ||
-            label == "отправить" || label == "отправить сообщение"
-        if (match && node.isVisibleToUser && node.isClickable && node.isEnabled) return node
+        val viewId = node.viewIdResourceName.orEmpty().lowercase()
+        val match = label in setOf(
+            "send", "send message", "send prompt", "отправить", "отправить сообщение"
+        ) || viewId.contains("send")
+        if (match && node.isVisibleToUser && node.isEnabled) {
+            if (node.isClickable) return node
+            node.parent?.takeIf { it.isVisibleToUser && it.isEnabled && it.isClickable }?.let { return it }
+        }
         for (i in 0 until node.childCount) findSendButton(node.getChild(i))?.let { return it }
         return null
     }
