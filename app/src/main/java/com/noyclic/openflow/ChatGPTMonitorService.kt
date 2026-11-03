@@ -20,6 +20,7 @@ class ChatGPTMonitorService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private val state by lazy { getSharedPreferences("openflow_state", MODE_PRIVATE) }
     private var pendingFingerprint: String? = null
+    private var lastAutoSentFingerprint: String? = null
     private var stableCheck: Runnable? = null
 
     override fun onServiceConnected() {
@@ -53,7 +54,8 @@ class ChatGPTMonitorService : AccessibilityService() {
                 state.edit().putString("monitor_status", "Ответ завершён").apply()
                 if (snapshot.visibleMessageCount >= state.getInt("long_chat_threshold", DEFAULT_LONG_CHAT_THRESHOLD)) {
                     requestHandoff(snapshot.visibleMessageCount)
-                } else if (state.getBoolean("auto_continue_enabled", false)) {
+                } else if (state.getBoolean("auto_continue_enabled", false) &&
+                    snapshot.fingerprint != lastAutoSentFingerprint) {
                     scheduleContinue(snapshot.fingerprint)
                 }
             }
@@ -106,6 +108,7 @@ class ChatGPTMonitorService : AccessibilityService() {
     }
 
     private fun requestHandoff(messageCount: Int) {
+        if (state.getBoolean("handoff_required", false)) return
         state.edit()
             .putBoolean("automation_enabled", false)
             .putBoolean("auto_continue_enabled", false)
@@ -128,11 +131,20 @@ class ChatGPTMonitorService : AccessibilityService() {
                 current.signal() != ScreenSignal.RESPONSE_COMPLETE ||
                 current.fingerprint != fingerprint) return@Runnable
             val sent = sendContinueMessage(root)
-            state.edit().putString(
-                "monitor_status",
-                if (sent) "Отправлено продолжение. Жду ответ…" else "Не нашёл поле ввода. Пауза для ручного действия."
-            ).apply()
-            if (!sent) state.edit().putBoolean("auto_continue_enabled", false).apply()
+            if (sent) {
+                lastAutoSentFingerprint = fingerprint
+                val count = state.getInt("auto_continue_count", 0) + 1
+                val keepGoing = count < MAX_AUTO_CONTINUES
+                state.edit()
+                    .putInt("auto_continue_count", count)
+                    .putBoolean("auto_continue_enabled", keepGoing)
+                    .putString("monitor_status", if (keepGoing) "Продолжение отправлено ($count/$MAX_AUTO_CONTINUES)" else "Лимит автопродолжений сессии достигнут. Пауза.")
+                    .apply()
+            } else {
+                state.edit().putBoolean("auto_continue_enabled", false)
+                    .putString("monitor_status", "Не нашёл поле ввода или кнопку отправки. Пауза для ручного действия.")
+                    .apply()
+            }
             pendingFingerprint = null
         }
         stableCheck = check
@@ -208,5 +220,6 @@ class ChatGPTMonitorService : AccessibilityService() {
         const val CHATGPT_PACKAGE = "com.openai.chatgpt"
         private const val RESPONSE_STABILITY_MS = 2200L
         private const val DEFAULT_LONG_CHAT_THRESHOLD = 36
+        private const val MAX_AUTO_CONTINUES = 25
     }
 }
