@@ -64,9 +64,10 @@ class ChatGPTMonitorService : AccessibilityService() {
         val now = System.currentTimeMillis()
         val eventPackage = event.packageName?.toString().orEmpty()
         // Other apps contribute package/event metadata only; their trees are never inspected.
-        if (eventPackage != lastDiagnosticsPackage || now - lastDiagnosticsWriteAt >= 5_000L ||
+        if (eventPackage != packageName && (
+            eventPackage != lastDiagnosticsPackage || now - lastDiagnosticsWriteAt >= 5_000L ||
             eventPackage == CHATGPT_PACKAGE
-        ) {
+        )) {
             lastDiagnosticsPackage = eventPackage
             lastDiagnosticsWriteAt = now
             state.edit()
@@ -77,6 +78,12 @@ class ChatGPTMonitorService : AccessibilityService() {
                 .apply()
         }
         if (eventPackage != CHATGPT_PACKAGE) return
+        state.edit()
+            .putString("diag_last_chatgpt_event_package", eventPackage)
+            .putString("diag_last_chatgpt_event_class", event.className?.toString().orEmpty())
+            .putInt("diag_last_chatgpt_event_type", event.eventType)
+            .putLong("diag_last_chatgpt_event_time", now)
+            .apply()
 
         val root = findChatGptRoot()
         if (root == null) {
@@ -846,6 +853,7 @@ class ChatGPTMonitorService : AccessibilityService() {
             .putBoolean("accessibility_connected", false)
             .putBoolean("automation_enabled", false)
             .putBoolean("auto_continue_enabled", false)
+            .putString("diag_service_state", "interrupted")
             .putString("monitor_status", "Служба наблюдения прервана Android. Автоматизация остановлена.")
             .apply()
     }
