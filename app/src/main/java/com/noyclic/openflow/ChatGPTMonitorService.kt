@@ -151,8 +151,15 @@ class ChatGPTMonitorService : AccessibilityService() {
             return
         }
         val scrollable = findScrollable(root)
-        if (scrollable == null || !scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
-            finishSeekLatest(pause = false)
+        if (scrollable == null) {
+            finishSeekLatest(pause = true)
+            return
+        }
+        if (!scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+            when (scrollTracker.recordScrollRejected()) {
+                com.noyclic.openflow.core.ScrollProgressTracker.Result.REACHED_END -> finishSeekLatest(pause = false)
+                else -> finishSeekLatest(pause = true)
+            }
             return
         }
         scrollAttempts++
