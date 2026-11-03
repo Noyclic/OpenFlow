@@ -8,6 +8,10 @@ import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.noyclic.openflow.core.AutomationSafety
+import com.noyclic.openflow.core.ContextHandoffFlow
+import com.noyclic.openflow.core.HandoffEvent
+import com.noyclic.openflow.core.HandoffStage
+import com.noyclic.openflow.core.MessageScanAccumulator
 import com.noyclic.openflow.core.GuardDecision
 import com.noyclic.openflow.core.ScreenSignal
 import com.noyclic.openflow.core.ScreenSnapshot
@@ -28,6 +32,8 @@ class ChatGPTMonitorService : AccessibilityService() {
     private var scrollCheck: Runnable? = null
     private var scrollDirection = com.noyclic.openflow.core.ScrollProgressTracker.Direction.BACKWARD_PROBE
     private var scrollTracker = com.noyclic.openflow.core.ScrollProgressTracker()
+    private val messageScan = MessageScanAccumulator()
+    private var handoffTimeout: Runnable? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -52,6 +58,9 @@ class ChatGPTMonitorService : AccessibilityService() {
         when (AutomationSafety.decide(signal)) {
             GuardDecision.PAUSE_AUTOMATION -> pauseFor(signal)
             GuardDecision.KEEP_MONITORING -> {
+                if (handoffStage() == HandoffStage.REQUESTING_SUMMARY) {
+                    state.edit().putBoolean("handoff_summary_generation_seen", true).apply()
+                }
                 pendingFingerprint = null
                 stableCheck?.let(handler::removeCallbacks)
                 stableCheck = null
@@ -59,6 +68,12 @@ class ChatGPTMonitorService : AccessibilityService() {
                 state.edit().putString("monitor_status", "Ответ генерируется…").apply()
             }
             GuardDecision.WAIT_FOR_USER -> {
+                if (handoffStage() == HandoffStage.REQUESTING_SUMMARY &&
+                    !state.getBoolean("handoff_summary_generation_seen", false)
+                ) {
+                    state.edit().putString("monitor_status", "Запрос сводки отправлен. Ожидаю начала ответа ChatGPT…").apply()
+                    return
+                }
                 if (!seekingLatest && snapshot.fingerprint != lastScannedFingerprint) beginSeekLatest(snapshot)
             }
         }
@@ -68,15 +83,16 @@ class ChatGPTMonitorService : AccessibilityService() {
         val texts = ArrayList<String>(96)
         var stop = false
         var send = false
-        var messageLikeNodes = 0
+        val messageKeys = linkedSetOf<String>()
         fun visit(node: AccessibilityNodeInfo?, depth: Int) {
             if (node == null || depth > 24 || texts.size >= 180) return
             val value = node.text?.toString()?.trim().orEmpty()
             val description = node.contentDescription?.toString()?.trim().orEmpty()
             if (value.isNotEmpty()) {
                 texts += value
-                if (value.length >= 40 && node.className?.toString()?.contains("TextView") == true) {
-                    messageLikeNodes++
+                if (value.length >= 40 && !node.isEditable) {
+                    val normalized = value.lowercase().replace(Regex("\\s+"), " ").trim()
+                    messageKeys += normalized.hashCode().toString(16)
                 }
             }
             if (description.isNotEmpty()) texts += description
@@ -85,11 +101,11 @@ class ChatGPTMonitorService : AccessibilityService() {
                 label.contains("stop response") || label.contains("остановить ответ")) stop = true
             val isSendLabel = label == "send" || label == "send message" ||
                 label == "отправить" || label == "отправить сообщение"
-            if (isSendLabel && node.isClickable && node.isEnabled) send = true
+            if (isSendLabel && node.isVisibleToUser && (node.isClickable || node.isFocusable)) send = true
             for (i in 0 until node.childCount) visit(node.getChild(i), depth + 1)
         }
         visit(root, 0)
-        return ScreenSnapshot(texts.joinToString("\n"), stop, send, messageLikeNodes)
+        return ScreenSnapshot(texts.joinToString("\n"), stop, send, messageKeys.size, messageKeys)
     }
 
     private fun pauseFor(signal: ScreenSignal) {
@@ -109,21 +125,77 @@ class ChatGPTMonitorService : AccessibilityService() {
         stableCheck?.let(handler::removeCallbacks)
         stableCheck = null
         cancelSeekLatest()
+        if (handoffStage() == HandoffStage.REQUESTING_SUMMARY) {
+            cancelHandoffTimeout()
+            transitionHandoff(HandoffEvent.SUMMARY_REQUEST_FAILED)
+        }
         showStatusNotification(state.getString("monitor_status", "OpenFlow paused") ?: "OpenFlow paused")
     }
 
-    private fun requestHandoff(messageCount: Int) {
-        if (state.getBoolean("handoff_required", false)) return
-        state.edit()
-            .putBoolean("automation_enabled", false)
-            .putBoolean("auto_continue_enabled", false)
-            .putBoolean("handoff_required", true)
-            .putInt("last_visible_message_count", messageCount)
-            .putString("monitor_status", "Похоже, чат стал длинным. Подготовь перенос контекста.")
-            .apply()
-        showStatusNotification("Чат длинный — пора подготовить перенос контекста.")
+    private fun handoffStage(): HandoffStage {
+        val stored = state.getString("handoff_stage", HandoffStage.IDLE.name) ?: HandoffStage.IDLE.name
+        return runCatching { HandoffStage.valueOf(stored) }.getOrDefault(HandoffStage.IDLE)
     }
 
+    private fun transitionHandoff(event: HandoffEvent) {
+        state.edit().putString("handoff_stage", ContextHandoffFlow.transition(handoffStage(), event).name).apply()
+    }
+
+    private fun requestHandoff(root: AccessibilityNodeInfo, messageCount: Int) {
+        if (state.getBoolean("handoff_required", false)) return
+        transitionHandoff(HandoffEvent.LONG_CHAT_DETECTED)
+        state.edit()
+            .putBoolean("handoff_required", true)
+            .putInt("last_visible_message_count", messageCount)
+            .putBoolean("auto_continue_enabled", false)
+            .apply()
+        if (state.getBoolean("auto_handoff_request_enabled", false)) {
+            state.edit()
+                .putBoolean("handoff_summary_generation_seen", false)
+                .putString("monitor_status", "Длинный чат найден. Отправляю запрос на сводку…")
+                .apply()
+            if (sendTextMessage(root, ContextHandoffFlow.SUMMARY_REQUEST_PROMPT)) {
+                transitionHandoff(HandoffEvent.SUMMARY_REQUEST_SENT)
+                state.edit().putString("monitor_status", "Запрос сводки отправлен. Ожидаю ответ ChatGPT…").apply()
+                scheduleHandoffTimeout()
+                showStatusNotification("Запросил сводку. После ответа проверь её в OpenFlow.")
+            } else {
+                state.edit()
+                    .putBoolean("automation_enabled", false)
+                    .putString("monitor_status", "Не удалось безопасно отправить запрос сводки. Проверь поле ввода вручную.")
+                    .apply()
+                showStatusNotification("Не удалось отправить запрос сводки. Автоматизация остановлена.")
+            }
+        } else {
+            state.edit()
+                .putBoolean("automation_enabled", false)
+                .putString("monitor_status", "Чат длинный. Подготовь перенос контекста вручную.")
+                .apply()
+            showStatusNotification("Чат длинный — пора подготовить перенос контекста.")
+        }
+    }
+
+    private fun scheduleHandoffTimeout() {
+        handoffTimeout?.let(handler::removeCallbacks)
+        val timeout = Runnable {
+            if (handoffStage() != HandoffStage.REQUESTING_SUMMARY) return@Runnable
+            transitionHandoff(HandoffEvent.SUMMARY_REQUEST_FAILED)
+            state.edit()
+                .putBoolean("automation_enabled", false)
+                .putBoolean("auto_continue_enabled", false)
+                .putString("monitor_status", "Не удалось подтвердить готовность сводки за 3 минуты. Проверь ChatGPT вручную.")
+                .apply()
+            showStatusNotification("Ожидание сводки завершено по тайм-ауту. Проверь ответ вручную.")
+            handoffTimeout = null
+        }
+        handoffTimeout = timeout
+        handler.postDelayed(timeout, HANDOFF_TIMEOUT_MS)
+    }
+
+    private fun cancelHandoffTimeout() {
+        handoffTimeout?.let(handler::removeCallbacks)
+        handoffTimeout = null
+    }
 
     /**
      * Move the ChatGPT conversation to its newest visible content before making
@@ -133,6 +205,8 @@ class ChatGPTMonitorService : AccessibilityService() {
      */
     private fun beginSeekLatest(snapshot: ScreenSnapshot) {
         seekingLatest = true
+        messageScan.reset()
+        messageScan.record(snapshot.messageKeys)
         scrollDirection = com.noyclic.openflow.core.ScrollProgressTracker.Direction.BACKWARD_PROBE
         scrollTracker = com.noyclic.openflow.core.ScrollProgressTracker(MAX_SCROLL_STEPS)
         lastScrollFingerprint = snapshot.fingerprint
@@ -191,6 +265,7 @@ class ChatGPTMonitorService : AccessibilityService() {
                 return@Runnable
             }
             val current = inspect(currentRoot)
+            messageScan.record(current.messageKeys)
             when (current.signal()) {
                 ScreenSignal.LOADING -> {
                     cancelSeekLatest()
@@ -274,6 +349,7 @@ class ChatGPTMonitorService : AccessibilityService() {
             return
         }
         val latest = inspect(root)
+        messageScan.record(latest.messageKeys)
         if (latest.signal() != ScreenSignal.RESPONSE_COMPLETE) {
             when (AutomationSafety.decide(latest.signal())) {
                 GuardDecision.PAUSE_AUTOMATION -> pauseFor(latest.signal())
@@ -284,8 +360,29 @@ class ChatGPTMonitorService : AccessibilityService() {
         }
         lastScannedFingerprint = latest.fingerprint
         state.edit().putString("monitor_status", "Последние сообщения проверены").apply()
-        if (latest.visibleMessageCount >= state.getInt("long_chat_threshold", DEFAULT_LONG_CHAT_THRESHOLD)) {
-            requestHandoff(latest.visibleMessageCount)
+        if (handoffStage() == HandoffStage.REQUESTING_SUMMARY) {
+            cancelHandoffTimeout()
+            if (state.getBoolean("handoff_summary_generation_seen", false)) {
+                transitionHandoff(HandoffEvent.SUMMARY_RESPONSE_COMPLETED)
+                state.edit()
+                    .putBoolean("automation_enabled", false)
+                    .putBoolean("auto_continue_enabled", false)
+                    .putString("monitor_status", "Сводка готова. Проверь её и перенеси в новый чат вручную.")
+                    .apply()
+                showStatusNotification("Сводка готова. Проверь её в ChatGPT и перенеси в новый чат.")
+            } else {
+                transitionHandoff(HandoffEvent.SUMMARY_REQUEST_FAILED)
+                state.edit()
+                    .putBoolean("automation_enabled", false)
+                    .putString("monitor_status", "Не удалось подтвердить начало генерации сводки. Проверь ChatGPT вручную.")
+                    .apply()
+                showStatusNotification("Не удалось подтвердить генерацию сводки. Автоматизация остановлена.")
+            }
+            return
+        }
+        val scannedMessageCount = messageScan.uniqueCount
+        if (scannedMessageCount >= state.getInt("long_chat_threshold", DEFAULT_LONG_CHAT_THRESHOLD)) {
+            requestHandoff(root, scannedMessageCount)
         } else if (state.getBoolean("auto_continue_enabled", false) &&
             latest.fingerprint != lastAutoSentFingerprint) {
             scheduleContinue(latest.fingerprint)
@@ -297,13 +394,27 @@ class ChatGPTMonitorService : AccessibilityService() {
         pendingFingerprint = fingerprint
         stableCheck?.let(handler::removeCallbacks)
         val check = Runnable {
-            val root = rootInActiveWindow ?: return@Runnable
+            stableCheck = null
+            val root = rootInActiveWindow
+            if (root == null) {
+                pendingFingerprint = null
+                pauseFor(ScreenSignal.UNKNOWN)
+                return@Runnable
+            }
             val current = inspect(root)
             if (!state.getBoolean("automation_enabled", false) ||
                 !state.getBoolean("auto_continue_enabled", false) ||
                 current.signal() != ScreenSignal.RESPONSE_COMPLETE ||
-                current.fingerprint != fingerprint) return@Runnable
-            val sent = sendContinueMessage(root)
+                current.fingerprint != fingerprint
+            ) {
+                pendingFingerprint = null
+                return@Runnable
+            }
+            val prompt = state.getString(
+                "continue_prompt",
+                "Продолжай работу с того места, где остановился. Не повторяй уже выполненное."
+            ) ?: "Продолжай работу с того места, где остановился. Не повторяй уже выполненное."
+            val sent = sendTextMessage(root, prompt)
             if (sent) {
                 lastAutoSentFingerprint = fingerprint
                 val count = state.getInt("auto_continue_count", 0) + 1
@@ -311,11 +422,16 @@ class ChatGPTMonitorService : AccessibilityService() {
                 state.edit()
                     .putInt("auto_continue_count", count)
                     .putBoolean("auto_continue_enabled", keepGoing)
-                    .putString("monitor_status", if (keepGoing) "Продолжение отправлено ($count/$MAX_AUTO_CONTINUES)" else "Лимит автопродолжений сессии достигнут. Пауза.")
+                    .putString(
+                        "monitor_status",
+                        if (keepGoing) "Продолжение отправлено ($count/$MAX_AUTO_CONTINUES)"
+                        else "Лимит автопродолжений сессии достигнут. Пауза."
+                    )
                     .apply()
             } else {
-                state.edit().putBoolean("auto_continue_enabled", false)
-                    .putString("monitor_status", "Не нашёл поле ввода или кнопку отправки. Пауза для ручного действия.")
+                state.edit()
+                    .putBoolean("auto_continue_enabled", false)
+                    .putString("monitor_status", "Не нашёл надёжное активное поле ввода или кнопку отправки. Автопродолжение выключено.")
                     .apply()
             }
             pendingFingerprint = null
@@ -324,33 +440,61 @@ class ChatGPTMonitorService : AccessibilityService() {
         handler.postDelayed(check, RESPONSE_STABILITY_MS)
     }
 
-    private fun sendContinueMessage(root: AccessibilityNodeInfo): Boolean {
-        val prompt = state.getString(
-            "continue_prompt",
-            "Продолжай работу с того места, где остановился. Не повторяй уже выполненное."
-        ) ?: return false
+    private fun sendTextMessage(root: AccessibilityNodeInfo, message: String): Boolean {
         val input = findEditable(root) ?: return false
-        val args = Bundle().apply {
-            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, prompt)
-        }
         if (!input.performAction(AccessibilityNodeInfo.ACTION_FOCUS)) return false
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, message)
+        }
         if (!input.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) return false
-        val sendButton = findSendButton(root) ?: return false
-        return sendButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        val refreshedRoot = rootInActiveWindow
+        val sendButton = refreshedRoot?.let(::findSendButton)
+        if (sendButton == null) {
+            clearComposer(input)
+            return false
+        }
+        val clicked = sendButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        if (!clicked) clearComposer(input)
+        return clicked
     }
 
-    private fun findEditable(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        if (node.isEditable) return node
-        for (i in 0 until node.childCount) findEditable(node.getChild(i))?.let { return it }
-        return null
+    private fun clearComposer(input: AccessibilityNodeInfo) {
+        val clear = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+        }
+        runCatching { input.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clear) }
+    }
+
+    private fun findEditable(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var best: AccessibilityNodeInfo? = null
+        var bestScore = Int.MIN_VALUE
+        fun visit(node: AccessibilityNodeInfo?, depth: Int) {
+            if (node == null || depth > 24) return
+            if (node.isEditable && node.isEnabled && node.isVisibleToUser) {
+                val hint = node.hintText?.toString().orEmpty().lowercase()
+                val viewId = node.viewIdResourceName.orEmpty().lowercase()
+                val className = node.className?.toString().orEmpty().lowercase()
+                var score = 0
+                if (hint.contains("message") || hint.contains("ask anything") || hint.contains("сообщ")) score += 30
+                if (viewId.contains("composer") || viewId.contains("message") || viewId.contains("input")) score += 20
+                if (className.contains("edittext")) score += 5
+                if (score > bestScore) {
+                    best = node
+                    bestScore = score
+                }
+            }
+            for (index in 0 until node.childCount) visit(node.getChild(index), depth + 1)
+        }
+        visit(root, 0)
+        return best
     }
 
     private fun findSendButton(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val label = ((node.text?.toString().orEmpty()) + " " +
-            (node.contentDescription?.toString().orEmpty())).lowercase()
-        val match = label == "send" || label == "send message" ||
+            (node.contentDescription?.toString().orEmpty())).trim().lowercase()
+        val match = label == "send" || label == "send message" || label == "send prompt" ||
             label == "отправить" || label == "отправить сообщение"
-        if (match && node.isClickable && node.isEnabled) return node
+        if (match && node.isVisibleToUser && node.isClickable && node.isEnabled) return node
         for (i in 0 until node.childCount) findSendButton(node.getChild(i))?.let { return it }
         return null
     }
@@ -382,6 +526,8 @@ class ChatGPTMonitorService : AccessibilityService() {
         stableCheck?.let(handler::removeCallbacks)
         stableCheck = null
         cancelSeekLatest()
+        cancelHandoffTimeout()
+        if (handoffStage() == HandoffStage.REQUESTING_SUMMARY) transitionHandoff(HandoffEvent.SUMMARY_REQUEST_FAILED)
         state.edit()
             .putBoolean("accessibility_connected", false)
             .putBoolean("automation_enabled", false)
@@ -394,6 +540,8 @@ class ChatGPTMonitorService : AccessibilityService() {
         stableCheck?.let(handler::removeCallbacks)
         stableCheck = null
         cancelSeekLatest()
+        cancelHandoffTimeout()
+        if (handoffStage() == HandoffStage.REQUESTING_SUMMARY) transitionHandoff(HandoffEvent.SUMMARY_REQUEST_FAILED)
         state.edit()
             .putBoolean("accessibility_connected", false)
             .putBoolean("automation_enabled", false)
@@ -409,5 +557,6 @@ class ChatGPTMonitorService : AccessibilityService() {
         private const val MAX_SCROLL_STEPS = 24
         private const val DEFAULT_LONG_CHAT_THRESHOLD = 36
         private const val MAX_AUTO_CONTINUES = 25
+        private const val HANDOFF_TIMEOUT_MS = 180_000L
     }
 }

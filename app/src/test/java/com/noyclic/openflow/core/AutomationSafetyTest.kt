@@ -66,5 +66,32 @@ class AutomationSafetyTest {
         assertEquals(false, tracker.recordAttempt())
     }
 
+    @Test fun messageScanCountsUniqueBlocksAcrossOverlappingPages() {
+        val scan = MessageScanAccumulator()
+        scan.record(setOf("a", "b", "c"))
+        scan.record(setOf("b", "c", "d"))
+        assertEquals(4, scan.uniqueCount)
+        scan.reset()
+        assertEquals(0, scan.uniqueCount)
+    }
+
+    @Test fun handoffRequiresOrderedSummaryAndCopyStages() {
+        var stage = HandoffStage.IDLE
+        stage = ContextHandoffFlow.transition(stage, HandoffEvent.LONG_CHAT_DETECTED)
+        assertEquals(HandoffStage.MANUAL_REVIEW, stage)
+        stage = ContextHandoffFlow.transition(stage, HandoffEvent.SUMMARY_REQUEST_SENT)
+        assertEquals(HandoffStage.REQUESTING_SUMMARY, stage)
+        stage = ContextHandoffFlow.transition(stage, HandoffEvent.SUMMARY_RESPONSE_COMPLETED)
+        assertEquals(HandoffStage.SUMMARY_READY, stage)
+        stage = ContextHandoffFlow.transition(stage, HandoffEvent.CONTEXT_COPIED)
+        assertEquals(HandoffStage.CONTEXT_COPIED, stage)
+        assertEquals(HandoffStage.IDLE, ContextHandoffFlow.transition(stage, HandoffEvent.RESET))
+    }
+
+    @Test fun invalidHandoffTransitionCannotSkipSummaryRequest() {
+        assertEquals(HandoffStage.IDLE,
+            ContextHandoffFlow.transition(HandoffStage.IDLE, HandoffEvent.SUMMARY_RESPONSE_COMPLETED))
+    }
+
     private fun snapshot(text: String) = ScreenSnapshot(text, false, false, 0)
 }

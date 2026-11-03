@@ -12,7 +12,8 @@ data class ScreenSnapshot(
     val text: String,
     val hasStopGenerationControl: Boolean,
     val hasSendControl: Boolean,
-    val visibleMessageCount: Int
+    val visibleMessageCount: Int,
+    val messageKeys: Set<String> = emptySet()
 ) {
     val normalizedText: String = text.lowercase()
     val fingerprint: String = normalizedText.hashCode().toString()
