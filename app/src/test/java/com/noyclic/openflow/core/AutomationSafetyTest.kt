@@ -13,9 +13,19 @@ class AutomationSafetyTest {
     @Test fun usageLimitAlwaysPauses() {
         assertEquals(GuardDecision.PAUSE_AUTOMATION, AutomationSafety.decide(ScreenSignal.USAGE_LIMIT))
     }
-    @Test fun errorsChallengesRestrictionsAndUnknownPause() {
-        listOf(ScreenSignal.SERVICE_ERROR, ScreenSignal.CAPTCHA, ScreenSignal.ACCESS_RESTRICTION, ScreenSignal.UNKNOWN)
+    @Test fun explicitErrorsAndChallengesPause() {
+        listOf(ScreenSignal.SERVICE_ERROR, ScreenSignal.CAPTCHA, ScreenSignal.ACCESS_RESTRICTION)
             .forEach { assertEquals(GuardDecision.PAUSE_AUTOMATION, AutomationSafety.decide(it)) }
+    }
+    @Test fun unknownAndReadyChatScreensKeepPassiveMonitoring() {
+        assertEquals(GuardDecision.KEEP_MONITORING, AutomationSafety.decide(ScreenSignal.UNKNOWN))
+        assertEquals(GuardDecision.KEEP_MONITORING, AutomationSafety.decide(ScreenSignal.CHAT_READY))
+    }
+    @Test fun composerIdentifiesReadyChatAndCompletedConversation() {
+        assertEquals(ScreenSignal.CHAT_READY, ScreenSnapshot("Ask anything", false, false, 0,
+            hasComposerControl = true).signal())
+        assertEquals(ScreenSignal.RESPONSE_COMPLETE, ScreenSnapshot("A visible response that is long enough to count.",
+            false, false, 1, hasComposerControl = true).signal())
     }
     @Test fun detectsRussianAndEnglishLimits() {
         listOf("You've reached your limit", "Достигнут лимит сообщений", "Попробуйте позже")
