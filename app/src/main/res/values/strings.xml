@@ -3,4 +3,6 @@
     <string name="app_name">OpenFlow</string>
     <string name="notification_channel_name">OpenFlow companion</string>
     <string name="notification_channel_description">Shows when the floating OpenFlow companion is active.</string>
+    <string name="accessibility_service_label">OpenFlow ChatGPT monitor</string>
+    <string name="accessibility_service_description">When explicitly enabled by you, observes the ChatGPT app accessibility tree on this device to detect response completion, long chats and safety limits. It does not capture screenshots or upload conversation content.</string>
 </resources>
