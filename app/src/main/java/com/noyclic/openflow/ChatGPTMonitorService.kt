@@ -44,13 +44,31 @@ class ChatGPTMonitorService : AccessibilityService() {
             flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                 AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
             notificationTimeout = 350
-            packageNames = arrayOf(CHATGPT_PACKAGE)
+            // Observe package transitions too: a strict package filter hides the very
+            // mismatch this diagnostic is intended to detect.
+            packageNames = null
         }
-        state.edit().putBoolean("accessibility_connected", true).apply()
+        state.edit()
+            .putBoolean("accessibility_connected", true)
+            .putString("diag_service_state", "connected")
+            .putString("diag_expected_package", CHATGPT_PACKAGE)
+            .apply()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.packageName?.toString() != CHATGPT_PACKAGE) return
+        if (event == null) return
+        val eventPackage = event.packageName?.toString().orEmpty()
+        // Keep only event metadata for other apps; never inspect their accessibility trees.
+        state.edit()
+            .putString("diag_last_event_package", eventPackage.ifBlank { "(empty)" })
+            .putString("diag_last_event_class", event.className?.toString().orEmpty())
+            .putInt("diag_last_event_type", event.eventType)
+            .putLong("diag_last_event_time", System.currentTimeMillis())
+            .apply()
+        if (eventPackage != CHATGPT_PACKAGE) return
+
+        val root = rootInActiveWindow
+        if (root != null) recordChatGptDiagnostics(root)
         if (!state.getBoolean("automation_enabled", false)) return
         // Ignore intermediate UI events while the handoff state machine owns the screen.
         if (handoffStage() == HandoffStage.TRANSFERRING) return
@@ -108,6 +126,56 @@ class ChatGPTMonitorService : AccessibilityService() {
         }
         visit(root, 0)
         return ScreenSnapshot(texts.joinToString("\n"), stop, send, messageKeys.size, messageKeys)
+    }
+
+    /**
+     * Local, privacy-conscious visibility diagnostics. For ChatGPT only, collect
+     * structure and short UI labels; long conversation text is deliberately omitted.
+     */
+    private fun recordChatGptDiagnostics(root: AccessibilityNodeInfo) {
+        var nodes = 0
+        var textNodes = 0
+        var editableNodes = 0
+        var clickableNodes = 0
+        var scrollableNodes = 0
+        val labels = linkedSetOf<String>()
+        val viewIds = linkedSetOf<String>()
+        val classes = linkedSetOf<String>()
+
+        fun visit(node: AccessibilityNodeInfo?, depth: Int) {
+            if (node == null || depth > 24 || nodes >= 500) return
+            nodes++
+            if (!node.isVisibleToUser) return
+            val value = node.text?.toString()?.trim().orEmpty()
+            val description = node.contentDescription?.toString()?.trim().orEmpty()
+            if (value.isNotEmpty()) textNodes++
+            if (node.isEditable) editableNodes++
+            if (node.isClickable) clickableNodes++
+            if (node.isScrollable) scrollableNodes++
+
+            // Never store message-sized text; retain only concise control labels.
+            if (value.length in 1..44) labels.add(value)
+            if (description.length in 1..44) labels.add(description)
+            node.viewIdResourceName?.takeIf { it.isNotBlank() }?.let(viewIds::add)
+            node.className?.toString()?.takeIf { it.isNotBlank() }?.let(classes::add)
+
+            for (index in 0 until node.childCount) visit(node.getChild(index), depth + 1)
+        }
+
+        visit(root, 0)
+        state.edit()
+            .putString("diag_chatgpt_root_package", root.packageName?.toString().orEmpty())
+            .putString("diag_chatgpt_root_class", root.className?.toString().orEmpty())
+            .putInt("diag_chatgpt_nodes", nodes)
+            .putInt("diag_chatgpt_text_nodes", textNodes)
+            .putInt("diag_chatgpt_editable_nodes", editableNodes)
+            .putInt("diag_chatgpt_clickable_nodes", clickableNodes)
+            .putInt("diag_chatgpt_scrollable_nodes", scrollableNodes)
+            .putString("diag_chatgpt_labels", labels.take(35).joinToString(" | "))
+            .putString("diag_chatgpt_view_ids", viewIds.take(25).joinToString(" | "))
+            .putString("diag_chatgpt_classes", classes.take(12).joinToString(" | "))
+            .putLong("diag_chatgpt_tree_time", System.currentTimeMillis())
+            .apply()
     }
 
     private fun pauseFor(signal: ScreenSignal) {
@@ -682,6 +750,7 @@ class ChatGPTMonitorService : AccessibilityService() {
         if (handoffStage() == HandoffStage.REQUESTING_SUMMARY) transitionHandoff(HandoffEvent.SUMMARY_REQUEST_FAILED)
         state.edit()
             .putBoolean("accessibility_connected", false)
+            .putString("diag_service_state", "disconnected")
             .putBoolean("automation_enabled", false)
             .putBoolean("auto_continue_enabled", false)
             .apply()
