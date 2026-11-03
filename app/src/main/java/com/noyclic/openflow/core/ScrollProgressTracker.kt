@@ -34,5 +34,8 @@ class ScrollProgressTracker(
         else Result.CONTINUE
     }
 
+    fun recordScrollRejected(): Result =
+        if (observedMovement) Result.REACHED_END else Result.UNCERTAIN
+
     fun exhausted(): Boolean = steps >= maxSteps
 }
