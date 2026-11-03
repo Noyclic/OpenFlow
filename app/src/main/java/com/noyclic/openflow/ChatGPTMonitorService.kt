@@ -102,9 +102,8 @@ class ChatGPTMonitorService : AccessibilityService() {
             return
         }
         recordChatGptDiagnostics(root)
-        if (!state.getBoolean("automation_enabled", false)) return
-        if (handoffStage() == HandoffStage.TRANSFERRING) return
-
+        // Classification is also collected while automation is paused so the user
+        // can diagnose visibility without enabling any automatic actions.
         val snapshot = inspect(root)
         val signal = snapshot.signal()
         state.edit()
@@ -114,6 +113,9 @@ class ChatGPTMonitorService : AccessibilityService() {
             .putInt("diag_message_blocks", snapshot.visibleMessageCount)
             .putLong("diag_signal_time", now)
             .apply()
+
+        if (!state.getBoolean("automation_enabled", false)) return
+        if (handoffStage() == HandoffStage.TRANSFERRING) return
 
         when (AutomationSafety.decide(signal)) {
             GuardDecision.PAUSE_AUTOMATION -> pauseFor(signal)
