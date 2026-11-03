@@ -199,7 +199,7 @@ class MainActivity : Activity() {
                 .onFailure { toast("Open Android Settings → Accessibility → Downloaded apps.") }
         }
         gap(monitorCard, 14)
-        sectionTitle(monitorCard, "ChatGPT visibility diagnostics", "Open ChatGPT, return here, then copy what Accessibility can see. Other apps contribute package/event metadata only.")
+        sectionTitle(monitorCard, "ChatGPT visibility diagnostics", "No automation needed: open ChatGPT, return here, then copy the report. Other apps contribute package/event metadata only.")
         gap(monitorCard, 8)
         val lastPackage = prefs.getString("diag_last_event_package", "No accessibility events yet") ?: "No accessibility events yet"
         val rootPackage = prefs.getString("diag_chatgpt_root_package", "Not captured yet") ?: "Not captured yet"
