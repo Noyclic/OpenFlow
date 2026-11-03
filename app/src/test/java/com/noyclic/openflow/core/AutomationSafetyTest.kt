@@ -25,6 +25,22 @@ class AutomationSafetyTest {
         assertEquals(ScreenSignal.CAPTCHA, snapshot("Please complete CAPTCHA").signal())
         assertEquals(ScreenSignal.ACCESS_RESTRICTION, snapshot("Account restricted").signal())
     }
+    @Test fun scrollMustShowMovementBeforeTreatingNoOpAsBottom() {
+        val tracker = ScrollProgressTracker(maxSteps = 4)
+        assertEquals(true, tracker.recordAttempt())
+        assertEquals(ScrollProgressTracker.Result.UNCERTAIN, tracker.recordFingerprintUnchanged())
+        assertEquals(true, tracker.recordAttempt())
+        assertEquals(ScrollProgressTracker.Result.CONTINUE, tracker.recordFingerprintChanged())
+        assertEquals(true, tracker.recordAttempt())
+        assertEquals(ScrollProgressTracker.Result.REACHED_END, tracker.recordFingerprintUnchanged())
+    }
+    @Test fun scrollStepLimitIsBounded() {
+        val tracker = ScrollProgressTracker(maxSteps = 2)
+        assertEquals(true, tracker.recordAttempt())
+        assertEquals(true, tracker.recordAttempt())
+        assertEquals(false, tracker.recordAttempt())
+        assertEquals(true, tracker.exhausted())
+    }
     @Test fun stopGenerationMeansStillLoading() {
         assertEquals(ScreenSignal.LOADING, snapshot("assistant response", stop = true, send = true).signal())
     }
