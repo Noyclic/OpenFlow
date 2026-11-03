@@ -34,14 +34,16 @@ The first test device is a **Redmi Note 13 4G running Android 15**.
 | Pause, resume and stop controls | Implemented |
 | Ongoing Android foreground notification | Implemented |
 | Context-handoff request and clipboard workspace | Implemented |
-| Conservative safety decision policy + unit tests | Implemented |
-| Automatic ChatGPT screen recognition | Not implemented |
-| Automatic new-chat creation | Not implemented |
-| Automatic message sending | Disabled |
-| ChatGPT reasoning-mode control | Research required |
+| Conservative safety policy + bilingual unit tests | Implemented |
+| Opt-in ChatGPT accessibility observer | Implemented; device testing required |
+| Response-completion and safety-state detection | Implemented heuristically |
+| Opt-in auto-continue after a stable response | Implemented; device testing required |
+| Long-chat detection | Experimental estimate; pauses for review |
+| Automatic new-chat handoff | Not implemented |
+| ChatGPT reasoning-mode selection | Not controllable reliably by an external app; select manually |
 | AI provider/API integration | Not implemented |
 
-The app does **not** read ChatGPT conversations or inspect other apps. The handoff screen helps you request a summary, paste it into OpenFlow, and copy it into a new chat manually. The safety policy is a tested foundation for a future detector; it is not connected to screen recognition yet.
+When you explicitly enable the ChatGPT accessibility service in Android Settings, OpenFlow observes the active ChatGPT app accessibility tree locally. It does not capture screenshots or upload conversation text. Auto-continue is a separate opt-in switch and sends a saved continuation prompt only after a stable completion signal. Long-chat detection is heuristic and currently pauses for a manual handoff. Automatic new-chat creation and context injection are still planned.
 
 ## First run
 
@@ -71,8 +73,9 @@ GitHub Actions runs unit tests and builds a debug APK on pushes to `main`, pull 
 1. **User control first.** Keep active automation visible and provide immediate pause and stop controls.
 2. **Fail closed.** Limits, errors, access restrictions, CAPTCHA challenges and unknown states must stop automation.
 3. **No limit evasion.** Never rotate accounts, reset quotas, bypass CAPTCHAs or defeat service restrictions.
-4. **Privacy by default.** Do not silently collect or upload screenshots, credentials or conversation content.
-5. **Honest feature states.** Planned features are never presented as implemented.
+4. **Privacy by default.** Accessibility inspection stays on-device; no screenshots or conversation uploads.
+5. **Explicit opt-in.** Auto-continue is off until enabled by the user.
+6. **Honest feature states.** Heuristic detection and unfinished handoff features are clearly labelled.
 
 ## Roadmap and privacy
 
