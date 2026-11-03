@@ -14,11 +14,23 @@ class AutomationSafetyTest {
         assertEquals(GuardDecision.PAUSE_AUTOMATION, AutomationSafety.decide(ScreenSignal.USAGE_LIMIT))
     }
     @Test fun errorsChallengesRestrictionsAndUnknownPause() {
-        listOf(
-            ScreenSignal.SERVICE_ERROR, ScreenSignal.CAPTCHA,
-            ScreenSignal.ACCESS_RESTRICTION, ScreenSignal.UNKNOWN
-        ).forEach { signal ->
-            assertEquals("Signal $signal must pause", GuardDecision.PAUSE_AUTOMATION, AutomationSafety.decide(signal))
-        }
+        listOf(ScreenSignal.SERVICE_ERROR, ScreenSignal.CAPTCHA, ScreenSignal.ACCESS_RESTRICTION, ScreenSignal.UNKNOWN)
+            .forEach { assertEquals(GuardDecision.PAUSE_AUTOMATION, AutomationSafety.decide(it)) }
     }
+    @Test fun detectsRussianAndEnglishLimits() {
+        listOf("You've reached your limit", "Достигнут лимит сообщений", "Попробуйте позже")
+            .forEach { assertEquals(ScreenSignal.USAGE_LIMIT, snapshot(it).signal()) }
+    }
+    @Test fun captchaAndRestrictionAreNeverAutomated() {
+        assertEquals(ScreenSignal.CAPTCHA, snapshot("Please complete CAPTCHA").signal())
+        assertEquals(ScreenSignal.ACCESS_RESTRICTION, snapshot("Account restricted").signal())
+    }
+    @Test fun stopGenerationMeansStillLoading() {
+        assertEquals(ScreenSignal.LOADING, snapshot("assistant response", stop = true, send = true).signal())
+    }
+    @Test fun sendControlAndVisibleMessagesMeanResponseComplete() {
+        assertEquals(ScreenSignal.RESPONSE_COMPLETE, snapshot("assistant response", send = true).signal())
+    }
+    private fun snapshot(text: String, stop: Boolean = false, send: Boolean = false) =
+        ScreenSnapshot(text, stop, send, if (text.isBlank()) 0 else 2)
 }
