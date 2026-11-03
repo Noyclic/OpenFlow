@@ -4,5 +4,5 @@
     <string name="notification_channel_name">OpenFlow companion</string>
     <string name="notification_channel_description">Shows when the floating OpenFlow companion is active.</string>
     <string name="accessibility_service_label">OpenFlow ChatGPT monitor</string>
-    <string name="accessibility_service_description">When explicitly enabled by you, listens to app accessibility event metadata to identify ChatGPT and only inspects ChatGPT's accessibility tree. It does not inspect other apps' screen content, capture screenshots or upload conversation content.</string>
+    <string name="accessibility_service_description">When explicitly enabled by you, listens to app accessibility event metadata to identify ChatGPT and only inspects the ChatGPT accessibility tree. It does not inspect screen content from other apps, capture screenshots, or upload conversation content.</string>
 </resources>
