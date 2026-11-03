@@ -9,8 +9,8 @@ android {
         applicationId = "com.noyclic.openflow"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.4.1"
         testInstrumentationRunner = "android.test.runner.AndroidJUnitRunner"
     }
     buildTypes {
