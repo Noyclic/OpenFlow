@@ -199,7 +199,7 @@ class MainActivity : Activity() {
                 .onFailure { toast("Open Android Settings → Accessibility → Downloaded apps.") }
         }
         gap(monitorCard, 14)
-        sectionTitle(monitorCard, "ChatGPT visibility diagnostics", "Open ChatGPT, return here, then copy what Accessibility can see.")
+        sectionTitle(monitorCard, "ChatGPT visibility diagnostics", "Open ChatGPT, return here, then copy what Accessibility can see. Other apps contribute package/event metadata only.")
         gap(monitorCard, 8)
         val lastPackage = prefs.getString("diag_last_event_package", "No accessibility events yet") ?: "No accessibility events yet"
         val rootPackage = prefs.getString("diag_chatgpt_root_package", "Not captured yet") ?: "Not captured yet"
@@ -661,6 +661,7 @@ class MainActivity : Activity() {
             appendLine("Last event class: ${value("diag_last_event_class")}")
             appendLine("Last event type: ${prefs.getInt("diag_last_event_type", -1)}")
             appendLine("Last event time: ${time("diag_last_event_time")}")
+            appendLine("ChatGPT root status: ${value("diag_chatgpt_root_status")}")
             appendLine("ChatGPT root package: ${value("diag_chatgpt_root_package")}")
             appendLine("ChatGPT root class: ${value("diag_chatgpt_root_class")}")
             appendLine("Tree captured: ${time("diag_chatgpt_tree_time")}")
@@ -672,6 +673,10 @@ class MainActivity : Activity() {
             appendLine("Short UI labels: ${value("diag_chatgpt_labels")}")
             appendLine("View IDs: ${value("diag_chatgpt_view_ids")}")
             appendLine("Node classes: ${value("diag_chatgpt_classes")}")
+            appendLine("Last screen signal: ${value("diag_last_signal")}")
+            appendLine("Composer detected: ${prefs.getBoolean("diag_has_composer", false)}")
+            appendLine("Send control detected: ${prefs.getBoolean("diag_has_send", false)}")
+            appendLine("Visible message blocks: ${prefs.getInt("diag_message_blocks", -1)}")
             appendLine("Monitor status: ${value("monitor_status")}")
             appendLine("Stop reason: ${value("stop_reason")}")
             appendLine()
