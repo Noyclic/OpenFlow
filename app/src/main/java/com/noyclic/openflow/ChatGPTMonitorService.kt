@@ -27,6 +27,7 @@ class ChatGPTMonitorService : AccessibilityService() {
     private var unchangedScrollChecks = 0
     private var lastScrollFingerprint: String? = null
     private var scrollCheck: Runnable? = null
+    private var scrollTracker = com.noyclic.openflow.core.ScrollProgressTracker()
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -56,7 +57,7 @@ class ChatGPTMonitorService : AccessibilityService() {
                 state.edit().putString("monitor_status", "Ответ генерируется…").apply()
             }
             GuardDecision.WAIT_FOR_USER -> {
-                if (!seekingLatest) beginSeekLatest(root, snapshot)
+                if (!seekingLatest) beginSeekLatest(snapshot)
             }
         }
     }
@@ -125,10 +126,11 @@ class ChatGPTMonitorService : AccessibilityService() {
      * accessibility tree no longer changes, no scrollable container remains,
      * or the safety limit is reached.
      */
-    private fun beginSeekLatest(root: AccessibilityNodeInfo, snapshot: ScreenSnapshot) {
+    private fun beginSeekLatest(snapshot: ScreenSnapshot) {
         seekingLatest = true
         scrollAttempts = 0
         unchangedScrollChecks = 0
+        scrollTracker = com.noyclic.openflow.core.ScrollProgressTracker(MAX_SCROLL_STEPS)
         lastScrollFingerprint = snapshot.fingerprint
         state.edit().putString("monitor_status", "Проверяю последние сообщения…").apply()
         seekLatestStep()
@@ -144,8 +146,8 @@ class ChatGPTMonitorService : AccessibilityService() {
             finishSeekLatest(pause = true)
             return
         }
-        if (scrollAttempts >= MAX_SCROLL_STEPS || unchangedScrollChecks >= MAX_UNCHANGED_SCROLL_CHECKS) {
-            finishSeekLatest(pause = false)
+        if (!scrollTracker.recordAttempt()) {
+            finishSeekLatest(pause = true)
             return
         }
         val scrollable = findScrollable(root)
@@ -161,13 +163,19 @@ class ChatGPTMonitorService : AccessibilityService() {
                 return@Runnable
             }
             val current = inspect(currentRoot)
-            if (current.fingerprint == lastScrollFingerprint) {
+            val progress = if (current.fingerprint == lastScrollFingerprint) {
                 unchangedScrollChecks++
+                scrollTracker.recordFingerprintUnchanged()
             } else {
                 unchangedScrollChecks = 0
                 lastScrollFingerprint = current.fingerprint
+                scrollTracker.recordFingerprintChanged()
             }
-            seekLatestStep()
+            when (progress) {
+                com.noyclic.openflow.core.ScrollProgressTracker.Result.CONTINUE -> seekLatestStep()
+                com.noyclic.openflow.core.ScrollProgressTracker.Result.REACHED_END -> finishSeekLatest(pause = false)
+                com.noyclic.openflow.core.ScrollProgressTracker.Result.UNCERTAIN -> finishSeekLatest(pause = true)
+            }
         }
         scrollCheck = check
         handler.postDelayed(check, SCROLL_SETTLE_MS)
@@ -310,7 +318,6 @@ class ChatGPTMonitorService : AccessibilityService() {
         private const val RESPONSE_STABILITY_MS = 2200L
         private const val SCROLL_SETTLE_MS = 420L
         private const val MAX_SCROLL_STEPS = 24
-        private const val MAX_UNCHANGED_SCROLL_CHECKS = 2
         private const val DEFAULT_LONG_CHAT_THRESHOLD = 36
         private const val MAX_AUTO_CONTINUES = 25
     }
