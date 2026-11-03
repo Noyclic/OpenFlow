@@ -34,6 +34,12 @@ class AutomationSafetyTest {
         assertEquals(true, tracker.recordAttempt())
         assertEquals(ScrollProgressTracker.Result.REACHED_END, tracker.recordFingerprintUnchanged())
     }
+    @Test fun rejectedScrollOnlyConfirmsEndAfterVisibleMovement() {
+        val tracker = ScrollProgressTracker()
+        assertEquals(ScrollProgressTracker.Result.UNCERTAIN, tracker.recordScrollRejected())
+        tracker.recordFingerprintChanged()
+        assertEquals(ScrollProgressTracker.Result.REACHED_END, tracker.recordScrollRejected())
+    }
     @Test fun scrollStepLimitIsBounded() {
         val tracker = ScrollProgressTracker(maxSteps = 2)
         assertEquals(true, tracker.recordAttempt())
