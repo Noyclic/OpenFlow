@@ -6,13 +6,13 @@
 
 <p align="center">
   <strong>Your AI. Your Workflow. Your Automation.</strong>
-  <br />
-  An Android companion for making long-running AI conversations easier to manage.
+  <br />A user-controlled Android companion for long-running AI conversations.
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/status-early%20development-orange" alt="Early development" />
-  <img src="https://img.shields.io/badge/platform-Android-green" alt="Android" />
+  <img src="https://img.shields.io/badge/status-prototype-19B99A" alt="Prototype" />
+  <img src="https://img.shields.io/badge/platform-Android%208.0%2B-3DDC84?logo=android&logoColor=white" alt="Android 8.0+" />
+  <img src="https://img.shields.io/badge/build-GitHub%20Actions-2088FF?logo=githubactions&logoColor=white" alt="GitHub Actions" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
 
@@ -20,72 +20,64 @@
 
 ## What is OpenFlow?
 
-**OpenFlow** is a planned Android assistant that helps people manage long-running conversations with AI apps. It is designed around a simple idea: let the user stay in control while repetitive conversation-management tasks become easier.
+**OpenFlow** is an Android assistant designed to make long-running conversations with AI apps easier to manage. It combines a floating companion, context-handoff tools and conservative automation safeguards.
 
-The first target is an Android floating assistant that can recognize visible conversation states, help prepare context handoffs between chats, and offer carefully controlled UI actions.
+The first test device is a **Redmi Note 13 4G running Android 15**.
 
-> **Project status:** OpenFlow is at the beginning of development. The repository currently contains project documentation and planning; the Android application and the features below are not implemented yet.
+## What's in the current prototype?
 
-## Product vision
+| Feature | State |
+|---|---|
+| Dark OpenFlow dashboard | Implemented |
+| Settings and permission guidance | Implemented |
+| Movable floating companion overlay | Implemented |
+| Pause, resume and stop controls | Implemented |
+| Ongoing Android foreground notification | Implemented |
+| Context-handoff request and clipboard workspace | Implemented |
+| Conservative safety decision policy + unit tests | Implemented |
+| Automatic ChatGPT screen recognition | Not implemented |
+| Automatic new-chat creation | Not implemented |
+| Automatic message sending | Disabled |
+| ChatGPT reasoning-mode control | Research required |
+| AI provider/API integration | Not implemented |
 
-- **Conversation awareness** — recognize visible states such as an assistant response finishing or a usage-limit notice appearing.
-- **Context handoff** — help prepare a concise, structured summary before moving work into a fresh chat.
-- **Floating controls** — provide an optional overlay for quick, user-approved actions.
-- **User-controlled automation** — make actions visible, interruptible, and easy to disable.
-- **Responsible limits handling** — stop when a service reports a usage limit; never try to bypass it.
-- **Extensible design** — keep the architecture open to supporting more AI apps over time.
+The app does **not** read ChatGPT conversations or inspect other apps. The handoff screen helps you request a summary, paste it into OpenFlow, and copy it into a new chat manually. The safety policy is a tested foundation for a future detector; it is not connected to screen recognition yet.
 
-## Planned capabilities
+## First run
 
-| Area | Intended behavior | Status |
-|---|---|---|
-| Floating overlay | Optional on-screen assistant controls | Planned |
-| Screen-state detection | Detect visible completion, error, and limit states | Planned |
-| Context handoff | Prepare a carry-over summary for a new conversation | Planned |
-| User-approved actions | Execute supported UI actions only with clear user control | Planned |
-| Safety pause | Stop automation on limits, errors, or uncertain states | Planned |
-| Reasoning-mode reminder | Detect or remind about the selected ChatGPT mode where possible | Research |
-| App integrations | Add support for other AI apps | Future |
+1. Install the debug APK from the **OpenFlow-debug-apk** artifact in the latest successful GitHub Actions run.
+2. Open OpenFlow and tap **Launch floating assistant**.
+3. Grant **Display over other apps** when Android asks.
+4. Grant notification permission when prompted, then tap Launch again.
+5. Use the floating panel to pause, resume or stop it. You can also stop it from the ongoing notification.
 
-OpenFlow will not assume that every app exposes the same controls. Some actions may require manual confirmation or may not be technically available.
+Android or the device manufacturer may restrict overlays and foreground services based on system settings and battery management.
+
+## Build from source
+
+Requirements: JDK 17, Android SDK Platform 36 and Gradle 8.13.
+
+```bash
+gradle --no-daemon testDebugUnitTest
+gradle --no-daemon assembleDebug
+```
+
+APK output: `app/build/outputs/apk/debug/app-debug.apk`.
+
+GitHub Actions runs unit tests and builds a debug APK on pushes to `main`, pull requests and manual workflow dispatches. The APK is uploaded as a workflow artifact.
 
 ## Design principles
 
-1. **The user is in control.** Always provide a visible pause/stop control and clear automation status.
-2. **No limit evasion.** Stop on usage limits, account restrictions, CAPTCHAs, and service errors. Do not switch accounts or attempt to defeat restrictions.
-3. **No hidden collection.** Do not capture, store, or transmit screen content unless the user has clearly enabled a feature that needs it.
-4. **Least privilege.** Request Android permissions only when a feature needs them, explain why, and make optional permissions revocable.
-5. **Honest capability reporting.** Mark unavailable or uncertain UI states rather than guessing and clicking.
-6. **Respect app boundaries.** Prefer supported integrations and public APIs when available; use Android accessibility features transparently and in accordance with platform and service rules.
+1. **User control first.** Keep active automation visible and provide immediate pause and stop controls.
+2. **Fail closed.** Limits, errors, access restrictions, CAPTCHA challenges and unknown states must stop automation.
+3. **No limit evasion.** Never rotate accounts, reset quotas, bypass CAPTCHAs or defeat service restrictions.
+4. **Privacy by default.** Do not silently collect or upload screenshots, credentials or conversation content.
+5. **Honest feature states.** Planned features are never presented as implemented.
 
-## Platform
+## Roadmap and privacy
 
-- Initial target: Android.
-- First test device: Redmi Note 13 4G (Android 15).
-- The minimum supported Android version and implementation stack will be decided during the initial technical setup.
-
-## Development roadmap
-
-See **[ROADMAP.md](docs/ROADMAP.md)** for the staged plan.
-
-The first milestone is a safe, non-invasive prototype: an overlay with manual controls and a reliable pause state. Screen recognition and any automated actions come later, after their behavior can be tested.
-
-## Privacy and permissions
-
-OpenFlow may eventually use Android overlay and accessibility capabilities. These are powerful permissions. The app should explain each permission before requesting it, process screen information locally where practical, and avoid collecting credentials, private messages, or unrelated screen content.
-
-Read the current [Privacy & Permissions notes](docs/PRIVACY.md).
-
-## Contributing
-
-The project is in its planning stage. Before proposing a feature, please read [CONTRIBUTING.md](CONTRIBUTING.md) and the roadmap.
+See [docs/ROADMAP.md](docs/ROADMAP.md), [docs/PRIVACY.md](docs/PRIVACY.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
 OpenFlow is released under the [MIT License](LICENSE).
-
----
-
-<p align="center">
-  <sub>OpenFlow — keep the workflow moving, without giving up control.</sub>
-</p>

@@ -1,28 +1,28 @@
 # Privacy & Permissions
 
-OpenFlow is intended to assist with visible UI workflows. Screen and accessibility permissions can expose sensitive information, so privacy must be designed in from the start.
+OpenFlow is designed around visible, user-controlled Android workflows. Overlay and accessibility capabilities can expose sensitive information, so permissions must be limited and explained.
 
-## Permission principles
+## Permissions in the current prototype
 
-- Request overlay permission only for the floating assistant.
-- Request accessibility access only if a specific, documented feature requires it.
-- Explain what each permission enables before opening Android settings.
-- Provide an obvious way to pause automation and disable optional capabilities.
-- Do not request notification, storage, camera, microphone, or network permissions without a concrete feature requirement.
+- **Display over other apps** — required only for the floating companion.
+- **Post notifications** — used for the ongoing foreground-service notification while the companion is active.
+- **Foreground service** — keeps the user-started overlay available while another app is in front.
 
-## Screen content
+The current app does not request accessibility, screenshot, camera, microphone, contacts or storage access.
 
-The planned screen-state detector should inspect only the minimum UI information needed to determine whether a response is complete, an error is visible, or a usage limit has been reached.
+## Screen and conversation content
 
-The initial implementation should prefer on-device processing. It must not silently upload screenshots, conversation text, credentials, or unrelated screen content.
+The app does not inspect ChatGPT or other apps, capture screenshots, read conversation text or upload screen content. The handoff editor is temporary and uses the Android clipboard only when the user taps a copy button.
 
-## Automation safeguards
+Future screen-state recognition requires a separate privacy and compatibility review.
 
-- Never attempt to bypass service limits, account restrictions, CAPTCHA challenges, or access controls.
-- Stop when a usage-limit or restriction message is detected.
-- Stop rather than guess when the screen state is ambiguous.
-- Keep user-visible status and an immediate stop control available.
+## Safety
 
-## Current status
+- Never bypass service limits, account restrictions, CAPTCHA challenges or access controls.
+- Pause rather than guess when a screen state is unclear.
+- Keep status and a stop control visible.
+- Do not silently transmit conversation text or screenshots.
 
-This document describes requirements for future development. It does not mean that screen recognition, data processing, or automation has already been implemented.
+## Android platform notes
+
+The overlay uses Android's special-use foreground-service category and system overlay permission. Device manufacturers may apply extra battery restrictions. Google Play distribution may require additional foreground-service declarations and policy review.

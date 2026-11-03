@@ -1,48 +1,42 @@
 # OpenFlow Roadmap
 
-This roadmap describes the intended development sequence. Items are goals, not claims that a feature already exists.
+A checked item means code exists in the repository. It does not imply that the feature has been verified on every device.
 
 ## Phase 0 — Project foundation
-- [ ] Confirm Android project structure and build tooling.
-- [ ] Add a minimal app shell and application identity.
-- [ ] Establish code style, versioning, and CI build checks.
-- [ ] Document supported Android versions and permission rationale.
+- [x] Add a native Android application structure.
+- [x] Add a branded dashboard, settings and handoff workspace.
+- [x] Add a GitHub Actions debug build and unit-test workflow.
+- [x] Add conservative safety policy and unit tests.
 
-## Phase 1 — Safe floating assistant
-- [ ] Build the main activity and a minimal settings screen.
-- [ ] Add an optional floating overlay with clear active/paused states.
-- [ ] Add a prominent emergency stop control.
-- [ ] Persist user preferences locally.
-- [ ] Verify overlay behavior across app switching and screen rotation.
+## Phase 1 — Floating companion
+- [x] Add a user-started floating overlay.
+- [x] Add drag, pause, resume and stop controls.
+- [x] Show an ongoing Android foreground notification.
+- [ ] Verify overlay sizing and touch behavior on physical devices.
+- [ ] Add a local activity log.
 
 ## Phase 2 — Conversation-state awareness
-- [ ] Research Android accessibility APIs and supported alternatives.
-- [ ] Detect only the UI states needed for the workflow: response complete, loading, error, and usage limit.
-- [ ] Show confidence/uncertainty instead of acting on ambiguous states.
-- [ ] Add a manual review mode before enabling any automatic action.
+- [ ] Research compliant Android accessibility approaches and supported integrations.
+- [ ] Detect response-complete, loading, error and usage-limit states.
+- [ ] Add confidence thresholds and a manual-review mode.
+- [ ] Verify ambiguous states always pause.
 
 ## Phase 3 — Context handoff
-- [ ] Define a structured handoff format: project, current state, completed work, open issues, next steps, and important constraints.
-- [ ] Let the user review and edit the handoff summary.
-- [ ] Assist with opening a new chat and transferring the summary.
-- [ ] Verify that a handoff never silently discards the previous conversation.
+- [x] Add a handoff request template and clipboard workflow.
+- [ ] Add structured project profiles and reviewed handoff history.
+- [ ] Research reliable context capture without silently extracting private conversation content.
+- [ ] Assist with new-chat navigation through supported, user-visible actions.
 
 ## Phase 4 — Controlled automation
-- [ ] Add explicit per-action permissions and configurable safeguards.
-- [ ] Require confirmation for actions that send messages or change conversations.
-- [ ] Stop on usage limits, service errors, CAPTCHAs, or unexpected screens.
-- [ ] Never attempt account switching, quota resets, or other restriction evasion.
+- [x] Add a fail-closed safety decision model.
+- [x] Keep automatic message sending disabled in the prototype.
+- [ ] Add explicit per-action user approval.
+- [ ] Stop on limits, service errors, CAPTCHA challenges, restrictions and uncertain screens.
+- [ ] Research whether ChatGPT reasoning mode can be checked through supported UI controls.
 
-## Phase 5 — Compatibility and expansion
-- [ ] Test on the Redmi Note 13 4G (Android 15).
-- [ ] Measure battery use, memory use, and overlay stability.
-- [ ] Evaluate additional AI apps and supported integration methods.
-- [ ] Publish a first test APK only after the safety and reliability checks pass.
-
-## Release checklist
-- [ ] Clean debug build succeeds.
-- [ ] Core logic has automated tests.
-- [ ] Permissions are explained in-app.
-- [ ] Pause/stop behavior is tested.
-- [ ] Limit/error detection fails safe.
-- [ ] Privacy notes match actual app behavior.
+## Phase 5 — Device testing and expansion
+- [ ] Test on Redmi Note 13 4G (Android 15).
+- [ ] Measure battery use, memory use and overlay reliability.
+- [ ] Validate Android battery-management behavior.
+- [ ] Evaluate other AI apps and supported integrations.
+- [ ] Prepare a signed release after permissions, privacy and reliability reviews.
