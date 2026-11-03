@@ -184,6 +184,52 @@ class MainActivity : Activity() {
             }
         }
 
+        gap(parent, 24)
+        sectionTitle(parent, "ChatGPT automation", "Enable this only when you want OpenFlow to monitor your ChatGPT session.")
+        gap(parent, 12)
+        val monitorCard = card(parent, 18, "#152338", "#2C4861")
+        val accessibilityEnabled = isChatGptAccessibilityEnabled()
+        settingRow(monitorCard, "ChatGPT screen monitor", "Reads visible accessibility labels locally. Android permission required.", if (accessibilityEnabled) "CONNECTED" else "NOT ENABLED", accessibilityEnabled)
+        gap(monitorCard, 10)
+        outlineButton(monitorCard, if (accessibilityEnabled) "Accessibility settings" else "Enable screen monitor") {
+            runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                .onFailure { toast("Open Android Settings → Accessibility → Downloaded apps.") }
+        }
+        gap(monitorCard, 14)
+        val automationEnabled = prefs.getBoolean("automation_enabled", false)
+        actionButton(monitorCard, if (automationEnabled) "Pause automation" else "Start monitoring",
+            if (automationEnabled) "#493442" else "#65DFC1",
+            if (automationEnabled) "#FFC0C8" else "#09251F") {
+            if (!isChatGptAccessibilityEnabled()) {
+                toast("First enable OpenFlow ChatGPT monitor in Android Accessibility settings.")
+                runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+            } else {
+                prefs.edit()
+                    .putBoolean("automation_enabled", !automationEnabled)
+                    .putBoolean("auto_continue_enabled", false)
+                    .putString("monitor_status", if (automationEnabled) "Пауза вручную" else "Наблюдение включено")
+                    .putInt("auto_continue_count", 0)
+                    .apply()
+                toast(if (automationEnabled) "Automation paused." else "Monitoring started. Auto-continue is still off.")
+                render()
+            }
+        }
+        gap(monitorCard, 8)
+        val autoContinue = prefs.getBoolean("auto_continue_enabled", false)
+        outlineButton(monitorCard, if (autoContinue) "Disable auto-continue" else "Enable auto-continue") {
+            if (!prefs.getBoolean("automation_enabled", false)) {
+                toast("Start monitoring first.")
+            } else {
+                prefs.edit().putBoolean("auto_continue_enabled", !autoContinue).apply()
+                toast(if (autoContinue) "Auto-continue disabled." else "Auto-continue enabled.")
+                render()
+            }
+        }
+        gap(monitorCard, 8)
+        text(monitorCard, "Auto-continue sends your saved continuation prompt only after a stable completed response. A limit, error, CAPTCHA, restriction or uncertain screen stops it. Long-chat detection is an estimate and will pause for a handoff review.", 12f, "#9CADC2", false)
+        gap(monitorCard, 8)
+        text(monitorCard, "STATUS: ${prefs.getString("monitor_status", "Not started")}", 11f, "#69E4C5", true)
+
         gap(parent, 26)
         sectionTitle(parent, "Automation behavior", "The current build is intentionally conservative.")
         gap(parent, 12)
@@ -420,6 +466,12 @@ class MainActivity : Activity() {
     private fun color(value: String): Int = Color.parseColor(value)
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
     private fun isRunning() = prefs.getBoolean("overlay_running", false)
+
+    private fun isChatGptAccessibilityEnabled(): Boolean {
+        val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
+        val expected = android.content.ComponentName(this, ChatGPTMonitorService::class.java).flattenToString()
+        return enabled.split(':').any { it.equals(expected, ignoreCase = true) }
+    }
 
     private fun go(page: Page) {
         currentPage = page
