@@ -1,7 +1,7 @@
 package com.noyclic.openflow.core
 
 enum class ScreenSignal {
-    LOADING, RESPONSE_COMPLETE, USAGE_LIMIT, SERVICE_ERROR, CAPTCHA, ACCESS_RESTRICTION, UNKNOWN
+    LOADING, CHAT_READY, RESPONSE_COMPLETE, USAGE_LIMIT, SERVICE_ERROR, CAPTCHA, ACCESS_RESTRICTION, UNKNOWN
 }
 
 enum class GuardDecision {
@@ -13,7 +13,8 @@ data class ScreenSnapshot(
     val hasStopGenerationControl: Boolean,
     val hasSendControl: Boolean,
     val visibleMessageCount: Int,
-    val messageKeys: Set<String> = emptySet()
+    val messageKeys: Set<String> = emptySet(),
+    val hasComposerControl: Boolean = false
 ) {
     val normalizedText: String = text.lowercase()
     val fingerprint: String = normalizedText.hashCode().toString()
@@ -24,9 +25,10 @@ data class ScreenSnapshot(
         if (containsAny(normalizedText, RESTRICTION_MARKERS)) return ScreenSignal.ACCESS_RESTRICTION
         if (containsAny(normalizedText, ERROR_MARKERS)) return ScreenSignal.SERVICE_ERROR
         if (hasStopGenerationControl) return ScreenSignal.LOADING
-        if (hasSendControl && visibleMessageCount > 0 && normalizedText.isNotBlank()) {
+        if ((hasComposerControl || hasSendControl) && visibleMessageCount > 0 && normalizedText.isNotBlank()) {
             return ScreenSignal.RESPONSE_COMPLETE
         }
+        if (hasComposerControl || hasSendControl) return ScreenSignal.CHAT_READY
         return ScreenSignal.UNKNOWN
     }
 
@@ -52,12 +54,13 @@ data class ScreenSnapshot(
 
 object AutomationSafety {
     fun decide(signal: ScreenSignal): GuardDecision = when (signal) {
-        ScreenSignal.LOADING -> GuardDecision.KEEP_MONITORING
+        ScreenSignal.LOADING,
+        ScreenSignal.CHAT_READY,
+        ScreenSignal.UNKNOWN -> GuardDecision.KEEP_MONITORING
         ScreenSignal.RESPONSE_COMPLETE -> GuardDecision.WAIT_FOR_USER
         ScreenSignal.USAGE_LIMIT,
         ScreenSignal.SERVICE_ERROR,
         ScreenSignal.CAPTCHA,
-        ScreenSignal.ACCESS_RESTRICTION,
-        ScreenSignal.UNKNOWN -> GuardDecision.PAUSE_AUTOMATION
+        ScreenSignal.ACCESS_RESTRICTION -> GuardDecision.PAUSE_AUTOMATION
     }
 }
