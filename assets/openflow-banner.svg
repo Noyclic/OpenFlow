@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">OpenFlow</title>
+  <desc id="desc">OpenFlow — Your AI. Your Workflow. Your Automation.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101827"/>
+      <stop offset="1" stop-color="#172d43"/>
+    </linearGradient>
+    <linearGradient id="flow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#65e6d3"/>
+      <stop offset="1" stop-color="#6c9cff"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="1200" height="360" rx="30" fill="url(#bg)"/>
+  <circle cx="970" cy="175" r="130" fill="#244b68" opacity=".22"/>
+  <circle cx="970" cy="175" r="94" fill="none" stroke="url(#flow)" stroke-width="13" stroke-linecap="round" stroke-dasharray="410 180" transform="rotate(-42 970 175)" filter="url(#glow)"/>
+  <path d="M900 180h54l28-40 36 72 28-32h42" fill="none" stroke="#d8fff9" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="900" cy="180" r="9" fill="#65e6d3"/>
+  <circle cx="1088" cy="180" r="9" fill="#6c9cff"/>
+  <text x="82" y="157" fill="#f4f8ff" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="76" font-weight="750" letter-spacing="-2">OpenFlow</text>
+  <text x="88" y="211" fill="#b8c9dc" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="27">Your AI. Your Workflow. Your Automation.</text>
+  <text x="90" y="277" fill="#65e6d3" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="16" font-weight="700" letter-spacing="4">ANDROID AI WORKFLOW ASSISTANT</text>
+</svg>
