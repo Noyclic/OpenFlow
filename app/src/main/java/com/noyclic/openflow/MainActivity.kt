@@ -484,7 +484,6 @@ class MainActivity : Activity() {
         item.addView(labels, LinearLayout.LayoutParams(0, -2, 1f))
         chip(item, status, if (status == "ON") "#69E4C5" else "#9EADC1",
             if (status == "ON") "#163B39" else "#202D3D")
-        parent.addView(item)
         divider(parent)
     }
 
@@ -496,7 +495,6 @@ class MainActivity : Activity() {
         text(labels, description, 11.5f, "#8FA2B9", false)
         item.addView(labels, LinearLayout.LayoutParams(0, -2, 1f))
         chip(item, status, if (good) "#69E4C5" else "#F0C27A", if (good) "#153B38" else "#3D3020")
-        parent.addView(item)
     }
 
     private fun sectionTitle(parent: LinearLayout, title: String, subtitle: String) {
