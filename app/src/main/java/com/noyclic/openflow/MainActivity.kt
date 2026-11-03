@@ -199,6 +199,22 @@ class MainActivity : Activity() {
                 .onFailure { toast("Open Android Settings → Accessibility → Downloaded apps.") }
         }
         gap(monitorCard, 14)
+        sectionTitle(monitorCard, "ChatGPT visibility diagnostics", "Open ChatGPT, return here, then copy what Accessibility can see.")
+        gap(monitorCard, 8)
+        val lastPackage = prefs.getString("diag_last_event_package", "No accessibility events yet") ?: "No accessibility events yet"
+        val rootPackage = prefs.getString("diag_chatgpt_root_package", "Not captured yet") ?: "Not captured yet"
+        settingRow(monitorCard, "Last foreground event", lastPackage, if (lastPackage == ChatGPTMonitorService.CHATGPT_PACKAGE) "CHATGPT" else "WAITING", lastPackage == ChatGPTMonitorService.CHATGPT_PACKAGE)
+        divider(monitorCard)
+        settingRow(monitorCard, "ChatGPT accessibility tree", rootPackage,
+            if (rootPackage == ChatGPTMonitorService.CHATGPT_PACKAGE) "VISIBLE" else "NOT SEEN",
+            rootPackage == ChatGPTMonitorService.CHATGPT_PACKAGE)
+        gap(monitorCard, 8)
+        outlineButton(monitorCard, "Copy ChatGPT diagnostics") {
+            copyText("OpenFlow ChatGPT diagnostics", buildAccessibilityDiagnosticReport())
+        }
+        gap(monitorCard, 8)
+        outlineButton(monitorCard, "Open ChatGPT for test") { openChatGPT() }
+        gap(monitorCard, 14)
         val automationEnabled = prefs.getBoolean("automation_enabled", false)
         actionButton(monitorCard, if (automationEnabled) "Pause automation" else "Start monitoring",
             if (automationEnabled) "#493442" else "#65DFC1",
@@ -626,6 +642,41 @@ class MainActivity : Activity() {
         startService(Intent(this, OpenFlowOverlayService::class.java).setAction(OpenFlowOverlayService.ACTION_STOP))
         toast("Floating companion stopped.")
         render()
+    }
+
+    private fun buildAccessibilityDiagnosticReport(): String {
+        fun value(key: String, fallback: String = "not available") =
+            prefs.getString(key, fallback) ?: fallback
+        fun number(key: String) = prefs.getInt(key, -1).let { if (it < 0) "not available" else it.toString() }
+        fun time(key: String): String {
+            val timestamp = prefs.getLong(key, 0L)
+            return if (timestamp == 0L) "not available" else
+                java.text.DateFormat.getDateTimeInstance().format(java.util.Date(timestamp))
+        }
+        return buildString {
+            appendLine("OpenFlow ChatGPT visibility diagnostics")
+            appendLine("Expected package: ${value("diag_expected_package", ChatGPTMonitorService.CHATGPT_PACKAGE)}")
+            appendLine("Accessibility service: ${value("diag_service_state", if (prefs.getBoolean("accessibility_connected", false)) "connected" else "not connected")}")
+            appendLine("Last accessibility event package: ${value("diag_last_event_package")}")
+            appendLine("Last event class: ${value("diag_last_event_class")}")
+            appendLine("Last event type: ${prefs.getInt("diag_last_event_type", -1)}")
+            appendLine("Last event time: ${time("diag_last_event_time")}")
+            appendLine("ChatGPT root package: ${value("diag_chatgpt_root_package")}")
+            appendLine("ChatGPT root class: ${value("diag_chatgpt_root_class")}")
+            appendLine("Tree captured: ${time("diag_chatgpt_tree_time")}")
+            appendLine("Nodes: ${number("diag_chatgpt_nodes")}")
+            appendLine("Visible text nodes: ${number("diag_chatgpt_text_nodes")}")
+            appendLine("Editable nodes: ${number("diag_chatgpt_editable_nodes")}")
+            appendLine("Clickable nodes: ${number("diag_chatgpt_clickable_nodes")}")
+            appendLine("Scrollable nodes: ${number("diag_chatgpt_scrollable_nodes")}")
+            appendLine("Short UI labels: ${value("diag_chatgpt_labels")}")
+            appendLine("View IDs: ${value("diag_chatgpt_view_ids")}")
+            appendLine("Node classes: ${value("diag_chatgpt_classes")}")
+            appendLine("Monitor status: ${value("monitor_status")}")
+            appendLine("Stop reason: ${value("stop_reason")}")
+            appendLine()
+            appendLine("Privacy: long conversation text is not included in this report.")
+        }
     }
 
     private fun openChatGPT() {
