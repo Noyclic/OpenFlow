@@ -22,6 +22,11 @@ class ChatGPTMonitorService : AccessibilityService() {
     private var pendingFingerprint: String? = null
     private var lastAutoSentFingerprint: String? = null
     private var stableCheck: Runnable? = null
+    private var seekingLatest = false
+    private var scrollAttempts = 0
+    private var unchangedScrollChecks = 0
+    private var lastScrollFingerprint: String? = null
+    private var scrollCheck: Runnable? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -51,13 +56,7 @@ class ChatGPTMonitorService : AccessibilityService() {
                 state.edit().putString("monitor_status", "Ответ генерируется…").apply()
             }
             GuardDecision.WAIT_FOR_USER -> {
-                state.edit().putString("monitor_status", "Ответ завершён").apply()
-                if (snapshot.visibleMessageCount >= state.getInt("long_chat_threshold", DEFAULT_LONG_CHAT_THRESHOLD)) {
-                    requestHandoff(snapshot.visibleMessageCount)
-                } else if (state.getBoolean("auto_continue_enabled", false) &&
-                    snapshot.fingerprint != lastAutoSentFingerprint) {
-                    scheduleContinue(snapshot.fingerprint)
-                }
+                if (!seekingLatest) beginSeekLatest(root, snapshot)
             }
         }
     }
@@ -117,6 +116,96 @@ class ChatGPTMonitorService : AccessibilityService() {
             .putString("monitor_status", "Похоже, чат стал длинным. Подготовь перенос контекста.")
             .apply()
         showStatusNotification("Чат длинный — пора подготовить перенос контекста.")
+    }
+
+
+    /**
+     * Move the ChatGPT conversation to its newest visible content before making
+     * a completion/handoff decision. Scrolling is bounded and stops when the
+     * accessibility tree no longer changes, no scrollable container remains,
+     * or the safety limit is reached.
+     */
+    private fun beginSeekLatest(root: AccessibilityNodeInfo, snapshot: ScreenSnapshot) {
+        seekingLatest = true
+        scrollAttempts = 0
+        unchangedScrollChecks = 0
+        lastScrollFingerprint = snapshot.fingerprint
+        state.edit().putString("monitor_status", "Проверяю последние сообщения…").apply()
+        seekLatestStep()
+    }
+
+    private fun seekLatestStep() {
+        if (!state.getBoolean("automation_enabled", false)) {
+            finishSeekLatest(pause = false)
+            return
+        }
+        val root = rootInActiveWindow
+        if (root == null) {
+            finishSeekLatest(pause = true)
+            return
+        }
+        if (scrollAttempts >= MAX_SCROLL_STEPS || unchangedScrollChecks >= MAX_UNCHANGED_SCROLL_CHECKS) {
+            finishSeekLatest(pause = false)
+            return
+        }
+        val scrollable = findScrollable(root)
+        if (scrollable == null || !scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+            finishSeekLatest(pause = false)
+            return
+        }
+        scrollAttempts++
+        val check = Runnable {
+            val currentRoot = rootInActiveWindow
+            if (currentRoot == null) {
+                finishSeekLatest(pause = true)
+                return@Runnable
+            }
+            val current = inspect(currentRoot)
+            if (current.fingerprint == lastScrollFingerprint) {
+                unchangedScrollChecks++
+            } else {
+                unchangedScrollChecks = 0
+                lastScrollFingerprint = current.fingerprint
+            }
+            seekLatestStep()
+        }
+        scrollCheck = check
+        handler.postDelayed(check, SCROLL_SETTLE_MS)
+    }
+
+    private fun findScrollable(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        if (node.isScrollable) return node
+        for (i in 0 until node.childCount) {
+            findScrollable(node.getChild(i))?.let { return it }
+        }
+        return null
+    }
+
+    private fun finishSeekLatest(pause: Boolean) {
+        scrollCheck?.let(handler::removeCallbacks)
+        scrollCheck = null
+        seekingLatest = false
+        if (pause) {
+            pauseFor(ScreenSignal.UNKNOWN)
+            return
+        }
+        val root = rootInActiveWindow ?: return
+        val latest = inspect(root)
+        if (latest.signal() != ScreenSignal.RESPONSE_COMPLETE) {
+            when (AutomationSafety.decide(latest.signal())) {
+                GuardDecision.PAUSE_AUTOMATION -> pauseFor(latest.signal())
+                GuardDecision.KEEP_MONITORING -> state.edit().putString("monitor_status", "Ответ ещё генерируется…").apply()
+                GuardDecision.WAIT_FOR_USER -> Unit
+            }
+            return
+        }
+        state.edit().putString("monitor_status", "Последние сообщения проверены").apply()
+        if (latest.visibleMessageCount >= state.getInt("long_chat_threshold", DEFAULT_LONG_CHAT_THRESHOLD)) {
+            requestHandoff(latest.visibleMessageCount)
+        } else if (state.getBoolean("auto_continue_enabled", false) &&
+            latest.fingerprint != lastAutoSentFingerprint) {
+            scheduleContinue(latest.fingerprint)
+        }
     }
 
     private fun scheduleContinue(fingerprint: String) {
@@ -219,6 +308,9 @@ class ChatGPTMonitorService : AccessibilityService() {
     companion object {
         const val CHATGPT_PACKAGE = "com.openai.chatgpt"
         private const val RESPONSE_STABILITY_MS = 2200L
+        private const val SCROLL_SETTLE_MS = 420L
+        private const val MAX_SCROLL_STEPS = 24
+        private const val MAX_UNCHANGED_SCROLL_CHECKS = 2
         private const val DEFAULT_LONG_CHAT_THRESHOLD = 36
         private const val MAX_AUTO_CONTINUES = 25
     }
