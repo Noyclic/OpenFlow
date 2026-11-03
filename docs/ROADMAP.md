@@ -19,6 +19,9 @@ A checked item means code exists in the repository. It does not imply that the f
 - [x] Detect common English/Russian usage-limit, CAPTCHA, restriction and error text.
 - [x] Detect likely response completion using visible UI controls.
 - [x] Fail closed on unknown states.
+- [x] Bounded scroll-to-latest attempt before making completion decisions.
+- [x] Require visible content movement before treating a no-op as the bottom of the chat; pause if the end cannot be verified.
+- [ ] Validate scroll container selection and bottom detection on the physical device.
 - [ ] Validate selectors and false-positive rate on the physical device.
 - [ ] Improve message-count and long-chat estimation.
 
