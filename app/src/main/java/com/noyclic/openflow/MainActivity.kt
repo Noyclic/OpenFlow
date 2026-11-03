@@ -226,18 +226,7 @@ class MainActivity : Activity() {
             }
         }
         gap(monitorCard, 8)
-        val autoHandoff = prefs.getBoolean("auto_handoff_enabled", false)
-        outlineButton(monitorCard, if (autoHandoff) "Disable automatic handoff" else "Enable automatic handoff") {
-            if (!prefs.getBoolean("automation_enabled", false)) {
-                toast("Start monitoring first.")
-            } else {
-                prefs.edit().putBoolean("auto_handoff_enabled", !autoHandoff).apply()
-                toast(if (autoHandoff) "Automatic handoff disabled." else "Automatic handoff enabled. Review the first transfer carefully.")
-                render()
-            }
-        }
-        gap(monitorCard, 8)
-        text(monitorCard, "Auto-continue sends your saved continuation prompt only after a stable completed response. Automatic handoff can request a summary, but it is experimental and depends on ChatGPT exposing message and New chat controls to Android Accessibility. A limit, error, CAPTCHA, restriction or uncertain screen stops automation.", 12f, "#9CADC2", false)
+        text(monitorCard, "Auto-continue sends your saved continuation prompt only after a stable completed response. Long-chat detection is an estimate; it pauses and asks you to review a context handoff rather than risking a wrong chat switch. A limit, error, CAPTCHA, restriction or uncertain screen stops automation.", 12f, "#9CADC2", false)
         gap(monitorCard, 8)
         text(monitorCard, "STATUS: ${prefs.getString("monitor_status", "Not started")}", 11f, "#69E4C5", true)
 
@@ -249,7 +238,7 @@ class MainActivity : Activity() {
         divider(behavior)
         settingRow(behavior, "Limit protection", "A detected limit must pause automation.", "ON", true)
         divider(behavior)
-        settingRow(behavior, "Automatic message sending", "Not available in this prototype.", "OFF", false)
+        settingRow(behavior, "Auto-continue", "Optional; enable it in ChatGPT automation above.", "OPT-IN", false)
         gap(parent, 22)
         val note = card(parent, 16, "#18263B", "#18263B")
         text(note, "WHY THESE PERMISSIONS?", 11f, "#9BC5FF", true)
