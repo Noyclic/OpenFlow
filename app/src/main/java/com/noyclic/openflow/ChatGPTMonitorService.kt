@@ -21,12 +21,12 @@ class ChatGPTMonitorService : AccessibilityService() {
     private val state by lazy { getSharedPreferences("openflow_state", MODE_PRIVATE) }
     private var pendingFingerprint: String? = null
     private var lastAutoSentFingerprint: String? = null
+    private var lastScannedFingerprint: String? = null
     private var stableCheck: Runnable? = null
     private var seekingLatest = false
-    private var scrollAttempts = 0
-    private var unchangedScrollChecks = 0
     private var lastScrollFingerprint: String? = null
     private var scrollCheck: Runnable? = null
+    private var scrollDirection = com.noyclic.openflow.core.ScrollProgressTracker.Direction.BACKWARD_PROBE
     private var scrollTracker = com.noyclic.openflow.core.ScrollProgressTracker()
 
     override fun onServiceConnected() {
@@ -54,10 +54,12 @@ class ChatGPTMonitorService : AccessibilityService() {
             GuardDecision.KEEP_MONITORING -> {
                 pendingFingerprint = null
                 stableCheck?.let(handler::removeCallbacks)
+                stableCheck = null
+                cancelSeekLatest()
                 state.edit().putString("monitor_status", "Ответ генерируется…").apply()
             }
             GuardDecision.WAIT_FOR_USER -> {
-                if (!seekingLatest) beginSeekLatest(snapshot)
+                if (!seekingLatest && snapshot.fingerprint != lastScannedFingerprint) beginSeekLatest(snapshot)
             }
         }
     }
@@ -81,8 +83,9 @@ class ChatGPTMonitorService : AccessibilityService() {
             val label = (value + " " + description).lowercase()
             if (label.contains("stop generating") || label.contains("остановить генерацию") ||
                 label.contains("stop response") || label.contains("остановить ответ")) stop = true
-            if (label == "send" || label.contains("send message") || label == "отправить" ||
-                label.contains("отправить сообщение")) send = true
+            val isSendLabel = label == "send" || label == "send message" ||
+                label == "отправить" || label == "отправить сообщение"
+            if (isSendLabel && node.isClickable && node.isEnabled) send = true
             for (i in 0 until node.childCount) visit(node.getChild(i), depth + 1)
         }
         visit(root, 0)
@@ -104,6 +107,8 @@ class ChatGPTMonitorService : AccessibilityService() {
             .apply()
         pendingFingerprint = null
         stableCheck?.let(handler::removeCallbacks)
+        stableCheck = null
+        cancelSeekLatest()
         showStatusNotification(state.getString("monitor_status", "OpenFlow paused") ?: "OpenFlow paused")
     }
 
@@ -128,8 +133,7 @@ class ChatGPTMonitorService : AccessibilityService() {
      */
     private fun beginSeekLatest(snapshot: ScreenSnapshot) {
         seekingLatest = true
-        scrollAttempts = 0
-        unchangedScrollChecks = 0
+        scrollDirection = com.noyclic.openflow.core.ScrollProgressTracker.Direction.BACKWARD_PROBE
         scrollTracker = com.noyclic.openflow.core.ScrollProgressTracker(MAX_SCROLL_STEPS)
         lastScrollFingerprint = snapshot.fingerprint
         state.edit().putString("monitor_status", "Проверяю последние сообщения…").apply()
@@ -138,7 +142,7 @@ class ChatGPTMonitorService : AccessibilityService() {
 
     private fun seekLatestStep() {
         if (!state.getBoolean("automation_enabled", false)) {
-            finishSeekLatest(pause = false)
+            cancelSeekLatest()
             return
         }
         val root = rootInActiveWindow
@@ -155,65 +159,130 @@ class ChatGPTMonitorService : AccessibilityService() {
             finishSeekLatest(pause = true)
             return
         }
-        if (!scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
-            when (scrollTracker.recordScrollRejected()) {
-                com.noyclic.openflow.core.ScrollProgressTracker.Result.REACHED_END -> finishSeekLatest(pause = false)
-                else -> finishSeekLatest(pause = true)
+
+        val attemptedDirection = scrollDirection
+        val action = if (attemptedDirection ==
+            com.noyclic.openflow.core.ScrollProgressTracker.Direction.BACKWARD_PROBE
+        ) AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD else AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+
+        if (!scrollable.performAction(action)) {
+            when (scrollTracker.recordScrollRejected(attemptedDirection)) {
+                com.noyclic.openflow.core.ScrollProgressTracker.Result.CONTINUE -> {
+                    scrollDirection = com.noyclic.openflow.core.ScrollProgressTracker.Direction.FORWARD
+                    seekLatestStep()
+                }
+                com.noyclic.openflow.core.ScrollProgressTracker.Result.REACHED_END ->
+                    finishSeekLatest(pause = false)
+                com.noyclic.openflow.core.ScrollProgressTracker.Result.UNCERTAIN ->
+                    finishSeekLatest(pause = true)
             }
             return
         }
-        scrollAttempts++
+
+        val beforeFingerprint = inspect(root).fingerprint
         val check = Runnable {
+            if (!state.getBoolean("automation_enabled", false)) {
+                cancelSeekLatest()
+                return@Runnable
+            }
             val currentRoot = rootInActiveWindow
             if (currentRoot == null) {
                 finishSeekLatest(pause = true)
                 return@Runnable
             }
             val current = inspect(currentRoot)
-            val progress = if (current.fingerprint == lastScrollFingerprint) {
-                unchangedScrollChecks++
-                scrollTracker.recordFingerprintUnchanged()
-            } else {
-                unchangedScrollChecks = 0
-                lastScrollFingerprint = current.fingerprint
-                scrollTracker.recordFingerprintChanged()
-            }
-            when (progress) {
-                com.noyclic.openflow.core.ScrollProgressTracker.Result.CONTINUE -> seekLatestStep()
-                com.noyclic.openflow.core.ScrollProgressTracker.Result.REACHED_END -> finishSeekLatest(pause = false)
-                com.noyclic.openflow.core.ScrollProgressTracker.Result.UNCERTAIN -> finishSeekLatest(pause = true)
+            when (current.signal()) {
+                ScreenSignal.LOADING -> {
+                    cancelSeekLatest()
+                    state.edit().putString("monitor_status", "Ответ ещё генерируется…").apply()
+                }
+                ScreenSignal.RESPONSE_COMPLETE -> {
+                    if (current.fingerprint == beforeFingerprint) {
+                        finishSeekLatest(pause = true)
+                    } else {
+                        scrollTracker.recordFingerprintChanged()
+                        lastScrollFingerprint = current.fingerprint
+                        if (attemptedDirection ==
+                            com.noyclic.openflow.core.ScrollProgressTracker.Direction.BACKWARD_PROBE
+                        ) {
+                            scrollDirection = com.noyclic.openflow.core.ScrollProgressTracker.Direction.FORWARD
+                        }
+                        seekLatestStep()
+                    }
+                }
+                else -> pauseFor(current.signal())
             }
         }
         scrollCheck = check
         handler.postDelayed(check, SCROLL_SETTLE_MS)
     }
 
-    private fun findScrollable(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        if (node.isScrollable) return node
-        for (i in 0 until node.childCount) {
-            findScrollable(node.getChild(i))?.let { return it }
+    private fun findScrollable(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var best: AccessibilityNodeInfo? = null
+        var bestScore = Int.MIN_VALUE
+
+        fun subtreeTextStats(node: AccessibilityNodeInfo, depth: Int): Pair<Int, Int> {
+            if (depth > 24) return 0 to 0
+            val own = node.text?.toString()?.trim().orEmpty()
+            val hasLongText = if (own.length >= 40) 1 else 0
+            var longTextNodes = hasLongText
+            var textNodes = if (own.isNotEmpty()) 1 else 0
+            for (index in 0 until node.childCount) {
+                val child = node.getChild(index) ?: continue
+                val childStats = subtreeTextStats(child, depth + 1)
+                longTextNodes += childStats.first
+                textNodes += childStats.second
+            }
+            return longTextNodes to textNodes
         }
-        return null
+
+        fun visit(node: AccessibilityNodeInfo?, depth: Int) {
+            if (node == null || depth > 24) return
+            if (node.isScrollable && node.isVisibleToUser) {
+                val stats = subtreeTextStats(node, 0)
+                if (stats.first > 0) {
+                    val score = depth * 100 + stats.first * 10 + stats.second + node.childCount
+                    if (score > bestScore) {
+                        best = node
+                        bestScore = score
+                    }
+                }
+            }
+            for (index in 0 until node.childCount) visit(node.getChild(index), depth + 1)
+        }
+
+        visit(root, 0)
+        return best
     }
 
-    private fun finishSeekLatest(pause: Boolean) {
+    private fun cancelSeekLatest() {
         scrollCheck?.let(handler::removeCallbacks)
         scrollCheck = null
         seekingLatest = false
+        lastScrollFingerprint = null
+    }
+
+    private fun finishSeekLatest(pause: Boolean) {
+        cancelSeekLatest()
         if (pause) {
             pauseFor(ScreenSignal.UNKNOWN)
             return
         }
-        val root = rootInActiveWindow ?: return
+        val root = rootInActiveWindow
+        if (root == null) {
+            pauseFor(ScreenSignal.UNKNOWN)
+            return
+        }
         val latest = inspect(root)
         if (latest.signal() != ScreenSignal.RESPONSE_COMPLETE) {
             when (AutomationSafety.decide(latest.signal())) {
                 GuardDecision.PAUSE_AUTOMATION -> pauseFor(latest.signal())
                 GuardDecision.KEEP_MONITORING -> state.edit().putString("monitor_status", "Ответ ещё генерируется…").apply()
-                GuardDecision.WAIT_FOR_USER -> Unit
+                GuardDecision.WAIT_FOR_USER -> pauseFor(ScreenSignal.UNKNOWN)
             }
             return
         }
+        lastScannedFingerprint = latest.fingerprint
         state.edit().putString("monitor_status", "Последние сообщения проверены").apply()
         if (latest.visibleMessageCount >= state.getInt("long_chat_threshold", DEFAULT_LONG_CHAT_THRESHOLD)) {
             requestHandoff(latest.visibleMessageCount)
@@ -279,9 +348,9 @@ class ChatGPTMonitorService : AccessibilityService() {
     private fun findSendButton(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val label = ((node.text?.toString().orEmpty()) + " " +
             (node.contentDescription?.toString().orEmpty())).lowercase()
-        val match = label == "send" || label.contains("send message") ||
-            label == "отправить" || label.contains("отправить сообщение")
-        if (match && (node.isClickable || node.isFocusable)) return node
+        val match = label == "send" || label == "send message" ||
+            label == "отправить" || label == "отправить сообщение"
+        if (match && node.isClickable && node.isEnabled) return node
         for (i in 0 until node.childCount) findSendButton(node.getChild(i))?.let { return it }
         return null
     }
@@ -310,20 +379,33 @@ class ChatGPTMonitorService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
-        state.edit().putBoolean("accessibility_connected", false)
-            .putString("monitor_status", "Служба наблюдения прервана Android").apply()
+        stableCheck?.let(handler::removeCallbacks)
+        stableCheck = null
+        cancelSeekLatest()
+        state.edit()
+            .putBoolean("accessibility_connected", false)
+            .putBoolean("automation_enabled", false)
+            .putBoolean("auto_continue_enabled", false)
+            .putString("monitor_status", "Служба наблюдения прервана Android. Автоматизация остановлена.")
+            .apply()
     }
 
     override fun onDestroy() {
         stableCheck?.let(handler::removeCallbacks)
-        state.edit().putBoolean("accessibility_connected", false).apply()
+        stableCheck = null
+        cancelSeekLatest()
+        state.edit()
+            .putBoolean("accessibility_connected", false)
+            .putBoolean("automation_enabled", false)
+            .putBoolean("auto_continue_enabled", false)
+            .apply()
         super.onDestroy()
     }
 
     companion object {
         const val CHATGPT_PACKAGE = "com.openai.chatgpt"
         private const val RESPONSE_STABILITY_MS = 2200L
-        private const val SCROLL_SETTLE_MS = 420L
+        private const val SCROLL_SETTLE_MS = 650L
         private const val MAX_SCROLL_STEPS = 24
         private const val DEFAULT_LONG_CHAT_THRESHOLD = 36
         private const val MAX_AUTO_CONTINUES = 25

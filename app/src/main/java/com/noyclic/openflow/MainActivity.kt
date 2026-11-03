@@ -159,7 +159,7 @@ class MainActivity : Activity() {
         val note = card(parent, 15, "#111C2A", "#111C2A")
         text(note, "PROTOTYPE STATUS", 11f, "#69E4C5", true)
         gap(note, 6)
-        text(note, "The overlay and local handoff tools are available. Screen recognition, automatic chat creation and reasoning-mode control are not implemented yet.", 12f, "#9CADC2", false)
+        text(note, "ChatGPT monitoring and guarded scrolling are available after explicit Accessibility opt-in. Physical-device validation is still required. Automatic summary transfer, new-chat switching and reasoning-mode selection are not implemented.", 12f, "#9CADC2", false)
         gap(parent, 24)
         navigation(parent, Page.HOME)
     }
@@ -226,7 +226,7 @@ class MainActivity : Activity() {
             }
         }
         gap(monitorCard, 8)
-        text(monitorCard, "Auto-continue sends your saved continuation prompt only after a stable completed response. Long-chat detection is an estimate; it pauses and asks you to review a context handoff rather than risking a wrong chat switch. A limit, error, CAPTCHA, restriction or uncertain screen stops automation.", 12f, "#9CADC2", false)
+        text(monitorCard, "Auto-continue sends your saved prompt only after a stable completed response and a guarded scroll check. Long-chat detection is an estimate and pauses for a manual handoff. A limit, error, CAPTCHA, restriction, lost Accessibility service or uncertain screen stops automation.", 12f, "#9CADC2", false)
         gap(monitorCard, 8)
         text(monitorCard, "STATUS: ${prefs.getString("monitor_status", "Not started")}", 11f, "#69E4C5", true)
 
@@ -239,11 +239,13 @@ class MainActivity : Activity() {
         settingRow(behavior, "Limit protection", "A detected limit must pause automation.", "ON", true)
         divider(behavior)
         settingRow(behavior, "Auto-continue", "Optional; enable it in ChatGPT automation above.", "OPT-IN", false)
+        divider(behavior)
+        settingRow(behavior, "Reasoning mode", "Choose it manually in ChatGPT. OpenFlow cannot switch this setting reliably.", "MANUAL", false)
         gap(parent, 22)
         val note = card(parent, 16, "#18263B", "#18263B")
         text(note, "WHY THESE PERMISSIONS?", 11f, "#9BC5FF", true)
         gap(note, 7)
-        text(note, "Overlay permission is used only for the visible floating panel. The app does not currently read ChatGPT screens, capture screenshots or upload conversation content.", 13f, "#B6C6D8", false)
+        text(note, "Overlay permission is used only for the floating panel. The separately enabled Accessibility service reads visible ChatGPT UI labels locally to monitor state. OpenFlow does not capture screenshots or upload conversation text.", 13f, "#B6C6D8", false)
         gap(parent, 24)
         actionButton(parent, "Back to overview", "#65DFC1", "#09251F") { go(Page.HOME) }
         gap(parent, 20)
@@ -255,7 +257,7 @@ class MainActivity : Activity() {
         val intro = card(parent, 18, "#1A3850", "#18263B")
         text(intro, "A fresh chat.\nThe same progress.", 24f, "#F3F8FF", true)
         gap(intro, 8)
-        text(intro, "OpenFlow cannot read another app's conversation yet. Ask ChatGPT for a handoff summary, paste it here, then copy it into your new chat.", 13f, "#B9CADD", false)
+        text(intro, "OpenFlow can monitor visible ChatGPT controls, but it does not collect or store the conversation for an automatic summary. Ask ChatGPT for a structured handoff, review it here, then carry it into a new chat.", 13f, "#B9CADD", false)
         gap(parent, 20)
         sectionTitle(parent, "Step 1 · Ask for a summary", "Copy this request into your current ChatGPT conversation.")
         gap(parent, 10)
@@ -289,7 +291,9 @@ class MainActivity : Activity() {
                 "Continue from this project handoff. Verify repository state before editing and preserve the listed constraints.\n\n$value")
         }
         gap(parent, 9)
-        text(parent, "This screen does not upload or save your text. Clipboard copying happens only when you tap a button.", 12f, "#778BA3", false)
+        outlineButton(parent, "Open ChatGPT") { openChatGPT() }
+        gap(parent, 8)
+        text(parent, "This screen does not upload or save your text. Clipboard copying happens only when you tap a button. Opening ChatGPT returns you to its app; choose the target conversation or create a new chat yourself.", 12f, "#778BA3", false)
         gap(parent, 24)
         navigation(parent, Page.HANDOFF)
     }
@@ -299,11 +303,19 @@ class MainActivity : Activity() {
         val empty = card(parent, 22)
         text(empty, "◷", 34f, "#69E4C5", true)
         gap(empty, 10)
-        text(empty, "No background automation yet.", 18f, "#F2F7FF", true)
+        text(empty, "Monitoring with user control.", 18f, "#F2F7FF", true)
         gap(empty, 7)
-        text(empty, "This prototype does not send messages or monitor other apps. When the floating companion is active, Android shows an ongoing notification.", 13f, "#9CADC2", false)
+        text(empty, "OpenFlow can observe the ChatGPT accessibility tree after you enable the service. Message continuation is optional; context transfer remains manual.", 13f, "#9CADC2", false)
         gap(parent, 14)
-        settingRow(parent, "Floating companion", "Current service state", if (isRunning()) "ACTIVE" else "STOPPED", isRunning())
+        settingRow(parent, "Floating companion", "Current overlay state", if (isRunning()) "ACTIVE" else "STOPPED", isRunning())
+        divider(parent)
+        val monitoring = prefs.getBoolean("automation_enabled", false)
+        settingRow(parent, "ChatGPT monitor", "Accessibility observation", if (monitoring) "ACTIVE" else "PAUSED", monitoring)
+        divider(parent)
+        val continuing = prefs.getBoolean("auto_continue_enabled", false)
+        settingRow(parent, "Auto-continue", "Optional message continuation", if (continuing) "ON" else "OFF", continuing)
+        divider(parent)
+        settingRow(parent, "Context handoff", "Summary and new-chat transfer", "MANUAL", false)
         gap(parent, 24)
         navigation(parent, Page.ACTIVITY)
     }
@@ -507,6 +519,16 @@ class MainActivity : Activity() {
         startService(Intent(this, OpenFlowOverlayService::class.java).setAction(OpenFlowOverlayService.ACTION_STOP))
         toast("Floating companion stopped.")
         render()
+    }
+
+    private fun openChatGPT() {
+        val launchIntent = packageManager.getLaunchIntentForPackage(ChatGPTMonitorService.CHATGPT_PACKAGE)
+        if (launchIntent == null) {
+            toast("ChatGPT app was not found on this device.")
+            return
+        }
+        runCatching { startActivity(launchIntent) }
+            .onFailure { toast("Could not open ChatGPT.") }
     }
 
     private fun copyText(label: String, value: String) {

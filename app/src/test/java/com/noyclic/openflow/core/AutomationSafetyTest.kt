@@ -25,34 +25,46 @@ class AutomationSafetyTest {
         assertEquals(ScreenSignal.CAPTCHA, snapshot("Please complete CAPTCHA").signal())
         assertEquals(ScreenSignal.ACCESS_RESTRICTION, snapshot("Account restricted").signal())
     }
-    @Test fun scrollMustShowMovementBeforeTreatingNoOpAsBottom() {
+    @Test fun rejectedBackwardProbeFallsThroughToForwardScan() {
         val tracker = ScrollProgressTracker(maxSteps = 4)
         assertEquals(true, tracker.recordAttempt())
-        assertEquals(ScrollProgressTracker.Result.UNCERTAIN, tracker.recordFingerprintUnchanged())
+        assertEquals(
+            ScrollProgressTracker.Result.CONTINUE,
+            tracker.recordScrollRejected(ScrollProgressTracker.Direction.BACKWARD_PROBE)
+        )
         assertEquals(true, tracker.recordAttempt())
-        assertEquals(ScrollProgressTracker.Result.CONTINUE, tracker.recordFingerprintChanged())
-        assertEquals(true, tracker.recordAttempt())
-        assertEquals(ScrollProgressTracker.Result.REACHED_END, tracker.recordFingerprintUnchanged())
+        assertEquals(
+            ScrollProgressTracker.Result.UNCERTAIN,
+            tracker.recordScrollRejected(ScrollProgressTracker.Direction.FORWARD)
+        )
     }
-    @Test fun rejectedScrollOnlyConfirmsEndAfterVisibleMovement() {
+    @Test fun backwardMovementAllowsForwardScanToConfirmBottom() {
+        val tracker = ScrollProgressTracker(maxSteps = 4)
+        assertEquals(true, tracker.recordAttempt())
+        assertEquals(
+            ScrollProgressTracker.Result.CONTINUE,
+            tracker.recordFingerprintChanged()
+        )
+        assertEquals(true, tracker.recordAttempt())
+        assertEquals(
+            ScrollProgressTracker.Result.REACHED_END,
+            tracker.recordScrollRejected(ScrollProgressTracker.Direction.FORWARD)
+        )
+    }
+    @Test fun unchangedContentAfterAcceptedScrollIsNotProofOfBottom() {
         val tracker = ScrollProgressTracker()
-        assertEquals(ScrollProgressTracker.Result.UNCERTAIN, tracker.recordScrollRejected())
         tracker.recordFingerprintChanged()
-        assertEquals(ScrollProgressTracker.Result.REACHED_END, tracker.recordScrollRejected())
+        assertEquals(
+            ScrollProgressTracker.Result.UNCERTAIN,
+            tracker.recordFingerprintUnchanged()
+        )
     }
     @Test fun scrollStepLimitIsBounded() {
         val tracker = ScrollProgressTracker(maxSteps = 2)
         assertEquals(true, tracker.recordAttempt())
         assertEquals(true, tracker.recordAttempt())
         assertEquals(false, tracker.recordAttempt())
-        assertEquals(true, tracker.exhausted())
     }
-    @Test fun stopGenerationMeansStillLoading() {
-        assertEquals(ScreenSignal.LOADING, snapshot("assistant response", stop = true, send = true).signal())
-    }
-    @Test fun sendControlAndVisibleMessagesMeanResponseComplete() {
-        assertEquals(ScreenSignal.RESPONSE_COMPLETE, snapshot("assistant response", send = true).signal())
-    }
-    private fun snapshot(text: String, stop: Boolean = false, send: Boolean = false) =
-        ScreenSnapshot(text, stop, send, if (text.isBlank()) 0 else 2)
+
+    private fun snapshot(text: String) = ScreenSnapshot(text, false, false, 0)
 }

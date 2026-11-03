@@ -1,19 +1,20 @@
 package com.noyclic.openflow.core
 
 /**
- * Distinguishes a verified end-of-list from a scroll action that did not move
- * the visible content. A no-op on the first attempt is ambiguous and must pause.
+ * Tracks a bounded scroll probe. A failed backward probe only means that the
+ * view may already be at its top, so it must be followed by a forward scan.
+ * The end is confirmed only when forward scrolling is rejected after visible
+ * content movement has been observed.
  */
 class ScrollProgressTracker(
-    private val maxSteps: Int = 24,
-    private val maxUnchangedAfterMovement: Int = 1
+    private val maxSteps: Int = 24
 ) {
+    enum class Direction { BACKWARD_PROBE, FORWARD }
+    enum class Result { CONTINUE, REACHED_END, UNCERTAIN }
+
     var steps: Int = 0
         private set
-    private var unchangedAfterMovement = 0
     private var observedMovement = false
-
-    enum class Result { CONTINUE, REACHED_END, UNCERTAIN }
 
     fun recordAttempt(): Boolean {
         if (steps >= maxSteps) return false
@@ -23,19 +24,15 @@ class ScrollProgressTracker(
 
     fun recordFingerprintChanged(): Result {
         observedMovement = true
-        unchangedAfterMovement = 0
         return Result.CONTINUE
     }
 
-    fun recordFingerprintUnchanged(): Result {
-        if (!observedMovement) return Result.UNCERTAIN
-        unchangedAfterMovement++
-        return if (unchangedAfterMovement >= maxUnchangedAfterMovement) Result.REACHED_END
-        else Result.CONTINUE
-    }
+    fun recordFingerprintUnchanged(): Result = Result.UNCERTAIN
 
-    fun recordScrollRejected(): Result =
-        if (observedMovement) Result.REACHED_END else Result.UNCERTAIN
+    fun recordScrollRejected(direction: Direction): Result = when (direction) {
+        Direction.BACKWARD_PROBE -> Result.CONTINUE
+        Direction.FORWARD -> if (observedMovement) Result.REACHED_END else Result.UNCERTAIN
+    }
 
     fun exhausted(): Boolean = steps >= maxSteps
 }
