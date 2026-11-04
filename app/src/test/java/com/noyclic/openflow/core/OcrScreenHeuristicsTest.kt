@@ -33,6 +33,31 @@ class OcrScreenHeuristicsTest {
     }
 
     @Test
+    fun detectsSplitReplyAndChatGptPlaceholder() {
+        val result = OcrScreenHeuristics.classify(
+            listOf(
+                OcrTextLine("Ответить", 2_125, 2_170, 81f),
+                OcrTextLine("ChatGPT", 2_125, 2_170, 79f)
+            ),
+            screenHeight = 2_400
+        )
+        assertTrue(result.hasComposerHint)
+        assertTrue(result.bottomHasReplyToken)
+        assertTrue(result.bottomHasChatGptToken)
+        assertEquals("CHAT_READY", result.sceneHint)
+    }
+
+    @Test
+    fun reportsOnlyPrivacySafeBottomBandMetrics() {
+        val result = OcrScreenHeuristics.classify(
+            listOf(OcrTextLine("Ответить", 2_125, 2_170, 81f)), 2_400
+        )
+        assertEquals(1, result.bottomLineCount)
+        assertTrue(result.bottomMostLineY > 2_000)
+        assertTrue(result.bottomMaxConfidence > 75)
+    }
+
+    @Test
     fun acceptsReplyOnlyPlaceholderOnlyAtVeryBottom() {
         val bottom = OcrScreenHeuristics.classify(
             listOf(OcrTextLine("Ответить", 2_110, 2_180, 83f)),

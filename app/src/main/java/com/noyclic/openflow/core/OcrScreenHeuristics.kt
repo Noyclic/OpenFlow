@@ -19,7 +19,12 @@ internal data class OcrScreenSignals(
     val hasServiceErrorHint: Boolean = false,
     val visibleContentLineCount: Int = 0,
     val contentFingerprint: String = "",
-    val sceneHint: String = "UNKNOWN"
+    val sceneHint: String = "UNKNOWN",
+    val bottomLineCount: Int = 0,
+    val bottomHasReplyToken: Boolean = false,
+    val bottomHasChatGptToken: Boolean = false,
+    val bottomMostLineY: Int = -1,
+    val bottomMaxConfidence: Int = 0
 )
 
 /**
@@ -47,6 +52,21 @@ internal object OcrScreenHeuristics {
                 line.confidence >= confidence && tokens.any(text::contains)
             }
 
+        // OCR may split a single placeholder into separate lower-band text lines.
+        val bottomLines = normalized.filter { (line, _) ->
+            line.bottom >= screenHeight * 0.68f &&
+                (line.top + line.bottom) / 2f >= screenHeight * 0.70f
+        }
+        val bottomCombined = bottomLines.joinToString(" ") { it.second }
+        val bottomHasReplyToken = bottomLines.any { (_, text) ->
+            containsAny(text, "ответить", "reply", "respond")
+        }
+        val bottomHasChatGptToken = bottomLines.any { (_, text) ->
+            containsAny(text, "chatgpt", "чатгпт", "чат gpt")
+        }
+        val bottomMostLineY = bottomLines.maxOfOrNull { it.first.bottom } ?: -1
+        val bottomMaxConfidence = bottomLines.maxOfOrNull { it.first.confidence.toInt() } ?: 0
+
         val composerHint = normalized.any { (line, text) ->
             if (line.confidence < MIN_CONTROL_CONFIDENCE) return@any false
             val center = (line.top + line.bottom) / 2f
@@ -70,7 +90,11 @@ internal object OcrScreenHeuristics {
                 "введите запрос"
             )
             (nearBottom && knownPlaceholder) || (veryBottom && text == "ответить")
-        }
+        } || (
+            bottomHasReplyToken && bottomHasChatGptToken &&
+                bottomLines.any { it.first.confidence >= MIN_CONTROL_CONFIDENCE }
+        ) || bottomCombined.contains("ответить chatgpt") ||
+            bottomCombined.contains("reply to chatgpt")
 
         // Words in conversation content are not treated as a send button.
         // A visible text label must be in the composer band and match exactly.
@@ -169,7 +193,12 @@ internal object OcrScreenHeuristics {
             hasServiceErrorHint = serviceError,
             visibleContentLineCount = contentLines.size,
             contentFingerprint = contentFingerprint,
-            sceneHint = sceneHint
+            sceneHint = sceneHint,
+            bottomLineCount = bottomLines.size,
+            bottomHasReplyToken = bottomHasReplyToken,
+            bottomHasChatGptToken = bottomHasChatGptToken,
+            bottomMostLineY = bottomMostLineY,
+            bottomMaxConfidence = bottomMaxConfidence
         )
     }
 
