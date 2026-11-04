@@ -1,3 +1,6 @@
+import java.io.File
+import java.net.URL
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -10,10 +13,10 @@ val prepareOcrModels = tasks.register("prepareOcrModels") {
         tessdataDir.mkdirs()
         val modelRevision = "87416418657359cb625c412a48b6e1d6d41c29bd"
         listOf("eng", "rus").forEach { language ->
-            val target = java.io.File(tessdataDir, "$language.traineddata")
+            val target = File(tessdataDir, "$language.traineddata")
             if (!target.isFile || target.length() < 300_000L) {
                 val temporary = java.io.File(tessdataDir, "$language.traineddata.download")
-                val connection = java.net.URL(
+                val connection = URL(
                     "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/$modelRevision/$language.traineddata"
                 ).openConnection().apply {
                     connectTimeout = 30_000
