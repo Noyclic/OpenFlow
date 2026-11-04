@@ -647,7 +647,25 @@ class MainActivity : Activity() {
     private fun buildAccessibilityDiagnosticReport(): String {
         fun value(key: String, fallback: String = "not available") =
             prefs.getString(key, fallback) ?: fallback
-        fun number(key: String) = prefs.getInt(key, -1).let { if (it < 0) "not available" else it.toString() }
+        fun number(key: String): String {
+            // Older builds may have stored diagnostic counters/timings as Long.
+            // SharedPreferences.getInt throws ClassCastException for those values.
+            val raw = try {
+                prefs.all[key]
+            } catch (_: Exception) {
+                null
+            }
+            val numeric = when (raw) {
+                is Int -> raw.toLong()
+                is Long -> raw
+                is Short -> raw.toLong()
+                is Byte -> raw.toLong()
+                is Float -> raw.toLong()
+                is Double -> raw.toLong()
+                else -> null
+            } ?: return "not available"
+            return if (numeric < 0L) "not available" else numeric.toString()
+        }
         fun time(key: String): String {
             val timestamp = prefs.getLong(key, 0L)
             return if (timestamp == 0L) "not available" else
