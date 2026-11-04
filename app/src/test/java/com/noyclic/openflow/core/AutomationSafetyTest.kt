@@ -31,6 +31,28 @@ class AutomationSafetyTest {
         listOf("You've reached your limit", "Достигнут лимит сообщений", "Попробуйте позже")
             .forEach { assertEquals(ScreenSignal.USAGE_LIMIT, snapshot(it).signal()) }
     }
+
+    @Test fun ocrCanIdentifyComposerWithoutAccessibilityNodes() {
+        val snapshot = ScreenSnapshot("", false, false, 0, hasComposerControl = true)
+        assertEquals(ScreenSignal.CHAT_READY, snapshot.signal())
+        assertEquals(GuardDecision.KEEP_MONITORING, AutomationSafety.decide(snapshot.signal()))
+    }
+
+    @Test fun ocrVisibleContentCanConfirmAReadOnlyCompletedScreen() {
+        val snapshot = ScreenSnapshot(
+            "[OCR visible conversation content]", false, false, 1,
+            hasComposerControl = true, visualFingerprint = "2:abcd"
+        )
+        assertEquals(ScreenSignal.RESPONSE_COMPLETE, snapshot.signal())
+        assertEquals(GuardDecision.WAIT_FOR_USER, AutomationSafety.decide(snapshot.signal()))
+    }
+
+    @Test fun ocrSafetyHintsPauseAutomation() {
+        assertEquals(ScreenSignal.CAPTCHA,
+            ScreenSnapshot("", false, false, 0, hasCaptchaHint = true).signal())
+        assertEquals(ScreenSignal.SERVICE_ERROR,
+            ScreenSnapshot("", false, false, 0, hasServiceErrorHint = true).signal())
+    }
     @Test fun captchaAndRestrictionAreNeverAutomated() {
         assertEquals(ScreenSignal.CAPTCHA, snapshot("Please complete CAPTCHA").signal())
         assertEquals(ScreenSignal.ACCESS_RESTRICTION, snapshot("Account restricted").signal())

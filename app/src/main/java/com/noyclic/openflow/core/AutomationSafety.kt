@@ -14,16 +14,27 @@ data class ScreenSnapshot(
     val hasSendControl: Boolean,
     val visibleMessageCount: Int,
     val messageKeys: Set<String> = emptySet(),
-    val hasComposerControl: Boolean = false
+    val hasComposerControl: Boolean = false,
+    val hasUsageLimitHint: Boolean = false,
+    val hasCaptchaHint: Boolean = false,
+    val hasAccessRestrictionHint: Boolean = false,
+    val hasServiceErrorHint: Boolean = false,
+    val visualFingerprint: String = ""
 ) {
     val normalizedText: String = text.lowercase()
-    val fingerprint: String = normalizedText.hashCode().toString()
+    val fingerprint: String = buildString {
+        append(normalizedText.hashCode())
+        if (visualFingerprint.isNotBlank()) {
+            append(':')
+            append(visualFingerprint)
+        }
+    }
 
     fun signal(): ScreenSignal {
-        if (containsAny(normalizedText, LIMIT_MARKERS)) return ScreenSignal.USAGE_LIMIT
-        if (containsAny(normalizedText, CAPTCHA_MARKERS)) return ScreenSignal.CAPTCHA
-        if (containsAny(normalizedText, RESTRICTION_MARKERS)) return ScreenSignal.ACCESS_RESTRICTION
-        if (containsAny(normalizedText, ERROR_MARKERS)) return ScreenSignal.SERVICE_ERROR
+        if (hasUsageLimitHint || containsAny(normalizedText, LIMIT_MARKERS)) return ScreenSignal.USAGE_LIMIT
+        if (hasCaptchaHint || containsAny(normalizedText, CAPTCHA_MARKERS)) return ScreenSignal.CAPTCHA
+        if (hasAccessRestrictionHint || containsAny(normalizedText, RESTRICTION_MARKERS)) return ScreenSignal.ACCESS_RESTRICTION
+        if (hasServiceErrorHint || containsAny(normalizedText, ERROR_MARKERS)) return ScreenSignal.SERVICE_ERROR
         if (hasStopGenerationControl) return ScreenSignal.LOADING
         if ((hasComposerControl || hasSendControl) && visibleMessageCount > 0 && normalizedText.isNotBlank()) {
             return ScreenSignal.RESPONSE_COMPLETE

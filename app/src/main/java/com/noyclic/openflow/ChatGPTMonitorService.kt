@@ -45,6 +45,9 @@ class ChatGPTMonitorService : AccessibilityService() {
     private val ocrExecutor = Executors.newSingleThreadExecutor { task ->
         Thread(task, "OpenFlow-OCR").apply { isDaemon = true }
     }
+    // Latest OCR result remains in memory only; recognized conversation text is never persisted.
+    @Volatile private var latestOcrResult: OcrEngineResult? = null
+    @Volatile private var latestOcrAt: Long = 0L
     // Accessed only on ocrExecutor.
     private var localOcrEngine: LocalOcrEngine? = null
 
@@ -115,7 +118,21 @@ class ChatGPTMonitorService : AccessibilityService() {
         probeChatGptScreenshot()
         // Classification is also collected while automation is paused so the user
         // can diagnose visibility without enabling any automatic actions.
-        val snapshot = inspect(root)
+        processSnapshot(inspect(root), now)
+    }
+
+    private fun findChatGptRoot(): AccessibilityNodeInfo? {
+        val activeRoot = runCatching { rootInActiveWindow }.getOrNull()
+        if (activeRoot?.packageName?.toString() == CHATGPT_PACKAGE) return activeRoot
+        val availableWindows = runCatching { windows }.getOrNull() ?: return null
+        for (window in availableWindows) {
+            val candidate = runCatching { window.root }.getOrNull() ?: continue
+            if (candidate.packageName?.toString() == CHATGPT_PACKAGE) return candidate
+        }
+        return null
+    }
+
+    private fun processSnapshot(snapshot: ScreenSnapshot, now: Long) {
         val signal = snapshot.signal()
         state.edit()
             .putString("diag_last_signal", signal.name)
@@ -142,7 +159,7 @@ class ChatGPTMonitorService : AccessibilityService() {
                 cancelSeekLatest()
                 val status = when (signal) {
                     ScreenSignal.LOADING -> "Ответ генерируется…"
-                    ScreenSignal.CHAT_READY -> "ChatGPT найден. Жду сообщения…"
+                    ScreenSignal.CHAT_READY -> "ChatGPT найден. Поле ввода распознано; наблюдаю без отправки."
                     else -> "Экран пока распознан не полностью. Наблюдаю без автодействий."
                 }
                 state.edit().putString("monitor_status", status).apply()
@@ -161,35 +178,31 @@ class ChatGPTMonitorService : AccessibilityService() {
         }
     }
 
-    private fun findChatGptRoot(): AccessibilityNodeInfo? {
-        val activeRoot = runCatching { rootInActiveWindow }.getOrNull()
-        if (activeRoot?.packageName?.toString() == CHATGPT_PACKAGE) return activeRoot
-        val availableWindows = runCatching { windows }.getOrNull() ?: return null
-        for (window in availableWindows) {
-            val candidate = runCatching { window.root }.getOrNull() ?: continue
-            if (candidate.packageName?.toString() == CHATGPT_PACKAGE) return candidate
-        }
-        return null
-    }
-
     /**
      * Capture only the official ChatGPT window, run Russian+English OCR locally,
      * and retain diagnostic signals only. Pixel data and conversation text are
      * discarded after recognition and never leave the device.
      */
-    private fun probeChatGptScreenshot() {
+    private fun probeChatGptScreenshot(
+        force: Boolean = false,
+        onComplete: ((OcrEngineResult?) -> Unit)? = null
+    ) {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) {
             state.edit()
                 .putString("diag_screenshot_status", "UNSUPPORTED_API")
                 .putString("diag_ocr_status", "UNSUPPORTED_API")
                 .putLong("diag_screenshot_time", System.currentTimeMillis())
                 .apply()
+            onComplete?.invoke(null)
             return
         }
 
         val now = System.currentTimeMillis()
-        if (now - lastScreenshotProbeAt < SCREENSHOT_OCR_INTERVAL_MS) return
-        if (!ocrInFlight.compareAndSet(false, true)) return
+        if (!force && now - lastScreenshotProbeAt < SCREENSHOT_OCR_INTERVAL_MS) return
+        if (!ocrInFlight.compareAndSet(false, true)) {
+            onComplete?.invoke(null)
+            return
+        }
         lastScreenshotProbeAt = now
         state.edit()
             .putString("diag_screenshot_status", "REQUESTING")
@@ -199,7 +212,12 @@ class ChatGPTMonitorService : AccessibilityService() {
 
         try {
             val callbackExecutor = java.util.concurrent.Executor { command ->
-                runCatching { ocrExecutor.execute(command) }
+                runCatching { ocrExecutor.execute(command) }.onFailure {
+                    handler.post {
+                        ocrInFlight.set(false)
+                        onComplete?.invoke(null)
+                    }
+                }
             }
             takeScreenshot(
                 android.view.Display.DEFAULT_DISPLAY,
@@ -225,6 +243,8 @@ class ChatGPTMonitorService : AccessibilityService() {
                             val ocr = engine.recognize(softwareBitmap)
                             handler.post {
                                 ocrInFlight.set(false)
+                                latestOcrResult = ocr
+                                latestOcrAt = System.currentTimeMillis()
                                 state.edit()
                                     .putString("diag_screenshot_status", "SUCCESS")
                                     .putInt("diag_screenshot_width", width)
@@ -238,11 +258,22 @@ class ChatGPTMonitorService : AccessibilityService() {
                                     .putBoolean("diag_ocr_composer", ocr.hasComposerHint)
                                     .putBoolean("diag_ocr_send", ocr.hasSendLabel)
                                     .putBoolean("diag_ocr_stop", ocr.hasStopLabel)
+                                    .putBoolean("diag_ocr_new_chat", ocr.hasNewChatHint)
+                                    .putBoolean("diag_ocr_voice", ocr.hasVoiceInputHint)
+                                    .putBoolean("diag_ocr_usage_limit", ocr.hasUsageLimitHint)
+                                    .putBoolean("diag_ocr_security", ocr.hasSecurityChallengeHint)
+                                    .putBoolean("diag_ocr_service_error", ocr.hasServiceErrorHint)
+                                    .putInt("diag_ocr_content_lines", ocr.visibleContentLineCount)
+                                    .putString("diag_ocr_scene", ocr.sceneHint)
                                     .putString("diag_ocr_controls", ocr.controlHints.joinToString(" | "))
                                     .putLong("diag_ocr_duration", ocr.elapsedMs)
                                     .putString("diag_ocr_error", ocr.errorCode)
                                     .putLong("diag_ocr_time", System.currentTimeMillis())
                                     .apply()
+                                onComplete?.invoke(ocr)
+                                findChatGptRoot()?.let { currentRoot ->
+                                    processSnapshot(inspect(currentRoot), System.currentTimeMillis())
+                                }
                             }
                         } catch (error: Throwable) {
                             val errorName = error.javaClass.simpleName.ifBlank { "OCR_ERROR" }
@@ -257,6 +288,7 @@ class ChatGPTMonitorService : AccessibilityService() {
                                     .putString("diag_ocr_error", errorName.take(64))
                                     .putLong("diag_ocr_time", System.currentTimeMillis())
                                     .apply()
+                                onComplete?.invoke(null)
                             }
                         } finally {
                             bitmap?.recycle()
@@ -275,6 +307,7 @@ class ChatGPTMonitorService : AccessibilityService() {
                                 .putLong("diag_screenshot_time", System.currentTimeMillis())
                                 .putLong("diag_ocr_time", System.currentTimeMillis())
                                 .apply()
+                            onComplete?.invoke(null)
                         }
                     }
                 }
@@ -288,7 +321,29 @@ class ChatGPTMonitorService : AccessibilityService() {
                 .putLong("diag_screenshot_time", System.currentTimeMillis())
                 .putLong("diag_ocr_time", System.currentTimeMillis())
                 .apply()
+            onComplete?.invoke(null)
         }
+    }
+
+    private fun requestFreshOcrAfterScroll(onComplete: (OcrEngineResult?) -> Unit) {
+        var retries = 0
+        fun tryCapture() {
+            if (!state.getBoolean("automation_enabled", false)) {
+                onComplete(null)
+                return
+            }
+            if (ocrInFlight.get()) {
+                retries++
+                if (retries > 20) {
+                    onComplete(null)
+                } else {
+                    handler.postDelayed({ tryCapture() }, 300L)
+                }
+                return
+            }
+            probeChatGptScreenshot(force = true, onComplete = onComplete)
+        }
+        tryCapture()
     }
 
     private fun inspect(root: AccessibilityNodeInfo): ScreenSnapshot {
@@ -332,7 +387,32 @@ class ChatGPTMonitorService : AccessibilityService() {
             for (i in 0 until node.childCount) visit(node.getChild(i), depth + 1)
         }
         visit(root, 0)
-        return ScreenSnapshot(texts.joinToString("\n"), stop, send, messageKeys.size, messageKeys, composer)
+
+        val now = System.currentTimeMillis()
+        val ocr = latestOcrResult?.takeIf {
+            it.status == "SUCCESS" && now - latestOcrAt <= OCR_SIGNAL_MAX_AGE_MS
+        }
+        val ocrHasContent = (ocr?.visibleContentLineCount ?: 0) >= 2
+        val combinedText = buildString {
+            if (texts.isNotEmpty()) append(texts.joinToString(" "))
+            if (ocrHasContent) {
+                if (isNotEmpty()) append(' ')
+                append("[OCR_VISIBLE_CHAT_CONTENT]")
+            }
+        }
+
+        return ScreenSnapshot(
+            text = combinedText,
+            hasStopGenerationControl = stop || ocr?.hasStopLabel == true,
+            hasSendControl = send || ocr?.hasSendLabel == true,
+            visibleMessageCount = maxOf(messageKeys.size, if (ocrHasContent) 1 else 0),
+            messageKeys = messageKeys,
+            hasComposerControl = composer || ocr?.hasComposerHint == true,
+            hasUsageLimitHint = ocr?.hasUsageLimitHint == true,
+            hasCaptchaHint = ocr?.hasSecurityChallengeHint == true,
+            hasServiceErrorHint = ocr?.hasServiceErrorHint == true,
+            visualFingerprint = ocr?.contentFingerprint.orEmpty()
+        )
     }
 
     /**
@@ -513,13 +593,33 @@ class ChatGPTMonitorService : AccessibilityService() {
             finishSeekLatest(pause = true)
             return
         }
+
+        val attemptedDirection = scrollDirection
+        val beforeFingerprint = inspect(root).fingerprint
         val scrollable = findScrollable(root)
+
         if (scrollable == null) {
-            finishSeekLatest(pause = true)
+            // Compose may expose an empty accessibility tree. Swipe only within the
+            // conversation body, then take a fresh screenshot and verify its OCR hash.
+            state.edit().putString("diag_scroll_method", "GESTURE_FALLBACK").apply()
+            val dispatched = dispatchChatScrollGesture(attemptedDirection) { completed ->
+                if (!completed) {
+                    finishSeekLatest(pause = true)
+                    return@dispatchChatScrollGesture
+                }
+                requestFreshOcrAfterScroll { ocr ->
+                    if (ocr == null || ocr.status != "SUCCESS") {
+                        finishSeekLatest(pause = true)
+                    } else {
+                        verifySeekLatestStep(attemptedDirection, beforeFingerprint, usedGesture = true)
+                    }
+                }
+            }
+            if (!dispatched) finishSeekLatest(pause = true)
             return
         }
 
-        val attemptedDirection = scrollDirection
+        state.edit().putString("diag_scroll_method", "ACCESSIBILITY_NODE").apply()
         val action = if (attemptedDirection ==
             com.noyclic.openflow.core.ScrollProgressTracker.Direction.BACKWARD_PROBE
         ) AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD else AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
@@ -538,7 +638,14 @@ class ChatGPTMonitorService : AccessibilityService() {
             return
         }
 
-        val beforeFingerprint = inspect(root).fingerprint
+        verifySeekLatestStep(attemptedDirection, beforeFingerprint, usedGesture = false)
+    }
+
+    private fun verifySeekLatestStep(
+        attemptedDirection: com.noyclic.openflow.core.ScrollProgressTracker.Direction,
+        beforeFingerprint: String,
+        usedGesture: Boolean
+    ) {
         val check = Runnable {
             if (!state.getBoolean("automation_enabled", false)) {
                 cancelSeekLatest()
@@ -558,7 +665,23 @@ class ChatGPTMonitorService : AccessibilityService() {
                 }
                 ScreenSignal.RESPONSE_COMPLETE -> {
                     if (current.fingerprint == beforeFingerprint) {
-                        finishSeekLatest(pause = true)
+                        if (usedGesture && attemptedDirection ==
+                            com.noyclic.openflow.core.ScrollProgressTracker.Direction.BACKWARD_PROBE
+                        ) {
+                            // No movement while probing backward may mean the top edge.
+                            scrollDirection = com.noyclic.openflow.core.ScrollProgressTracker.Direction.FORWARD
+                            seekLatestStep()
+                        } else if (usedGesture && attemptedDirection ==
+                            com.noyclic.openflow.core.ScrollProgressTracker.Direction.FORWARD
+                        ) {
+                            when (scrollTracker.recordScrollRejected(attemptedDirection)) {
+                                com.noyclic.openflow.core.ScrollProgressTracker.Result.REACHED_END ->
+                                    finishSeekLatest(pause = false)
+                                else -> finishSeekLatest(pause = true)
+                            }
+                        } else {
+                            finishSeekLatest(pause = true)
+                        }
                     } else {
                         scrollTracker.recordFingerprintChanged()
                         lastScrollFingerprint = current.fingerprint
@@ -580,7 +703,51 @@ class ChatGPTMonitorService : AccessibilityService() {
             }
         }
         scrollCheck = check
-        handler.postDelayed(check, SCROLL_SETTLE_MS)
+        handler.postDelayed(check, if (usedGesture) 120L else SCROLL_SETTLE_MS)
+    }
+
+    private fun dispatchChatScrollGesture(
+        direction: com.noyclic.openflow.core.ScrollProgressTracker.Direction,
+        onComplete: (Boolean) -> Unit
+    ): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) return false
+        val metrics = resources.displayMetrics
+        val width = metrics.widthPixels.toFloat()
+        val height = metrics.heightPixels.toFloat()
+        if (width < 2f || height < 2f) return false
+
+        val x = width * 0.5f
+        val fromY: Float
+        val toY: Float
+        if (direction == com.noyclic.openflow.core.ScrollProgressTracker.Direction.BACKWARD_PROBE) {
+            fromY = height * 0.42f
+            toY = height * 0.70f
+        } else {
+            fromY = height * 0.70f
+            toY = height * 0.42f
+        }
+
+        val path = android.graphics.Path().apply {
+            moveTo(x, fromY)
+            lineTo(x, toY)
+        }
+        val gesture = android.accessibilityservice.GestureDescription.Builder()
+            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0L, 420L))
+            .build()
+
+        return dispatchGesture(
+            gesture,
+            object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                    handler.post { onComplete(true) }
+                }
+
+                override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                    handler.post { onComplete(false) }
+                }
+            },
+            handler
+        )
     }
 
     private fun findScrollable(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
@@ -1021,6 +1188,7 @@ class ChatGPTMonitorService : AccessibilityService() {
         const val CHATGPT_PACKAGE = "com.openai.chatgpt"
         private const val RESPONSE_STABILITY_MS = 2200L
         private const val SCREENSHOT_OCR_INTERVAL_MS = 8_000L
+        private const val OCR_SIGNAL_MAX_AGE_MS = 20_000L
         private const val SCROLL_SETTLE_MS = 650L
         private const val MAX_SCROLL_STEPS = 24
         private const val DEFAULT_LONG_CHAT_THRESHOLD = 36

@@ -17,7 +17,15 @@ internal data class OcrEngineResult(
     val hasStopLabel: Boolean = false,
     val controlHints: List<String> = emptyList(),
     val elapsedMs: Long = 0L,
-    val errorCode: String = ""
+    val errorCode: String = "",
+    val hasNewChatHint: Boolean = false,
+    val hasVoiceInputHint: Boolean = false,
+    val hasUsageLimitHint: Boolean = false,
+    val hasSecurityChallengeHint: Boolean = false,
+    val hasServiceErrorHint: Boolean = false,
+    val visibleContentLineCount: Int = 0,
+    val contentFingerprint: String = "",
+    val sceneHint: String = "UNKNOWN"
 )
 
 /**
@@ -88,7 +96,15 @@ internal class LocalOcrEngine(context: Context) : AutoCloseable {
                 hasSendLabel = signals.hasSendLabel,
                 hasStopLabel = signals.hasStopLabel,
                 controlHints = signals.controlHints,
-                elapsedMs = System.currentTimeMillis() - startedAt
+                elapsedMs = System.currentTimeMillis() - startedAt,
+                hasNewChatHint = signals.hasNewChatHint,
+                hasVoiceInputHint = signals.hasVoiceInputHint,
+                hasUsageLimitHint = signals.hasUsageLimitHint,
+                hasSecurityChallengeHint = signals.hasSecurityChallengeHint,
+                hasServiceErrorHint = signals.hasServiceErrorHint,
+                visibleContentLineCount = signals.visibleContentLineCount,
+                contentFingerprint = signals.contentFingerprint,
+                sceneHint = signals.sceneHint
             )
         } catch (error: Exception) {
             OcrEngineResult(
