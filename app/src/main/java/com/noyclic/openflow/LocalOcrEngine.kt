@@ -44,7 +44,9 @@ internal class LocalOcrEngine(context: Context) : AutoCloseable {
             // recognizable text. Treat it as an empty result, not a crash.
             val iterator = engine.getResultIterator()
                 ?: return OcrEngineResult(
-                    status = "NO_TEXT",
+                    status = if (recognizedText.isBlank()) "NO_TEXT" else "TEXT_NO_ITERATOR",
+                    lineCount = recognizedText.lineSequence().count { it.isNotBlank() },
+                    wordCount = recognizedText.trim().split(Regex("\\s+")).count(String::isNotBlank),
                     elapsedMs = System.currentTimeMillis() - startedAt
                 )
             try {
