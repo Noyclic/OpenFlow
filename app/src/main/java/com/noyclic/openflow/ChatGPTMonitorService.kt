@@ -3,6 +3,7 @@ package com.noyclic.openflow
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.os.Bundle
+import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
@@ -15,6 +16,8 @@ import com.noyclic.openflow.core.MessageScanAccumulator
 import com.noyclic.openflow.core.GuardDecision
 import com.noyclic.openflow.core.ScreenSignal
 import com.noyclic.openflow.core.ScreenSnapshot
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Opt-in, on-device observer for the official ChatGPT Android app.
@@ -38,6 +41,12 @@ class ChatGPTMonitorService : AccessibilityService() {
     private var lastDiagnosticsWriteAt: Long = 0L
     private var lastUncertainFingerprint: String? = null
     private var lastScreenshotProbeAt: Long = 0L
+    private val ocrInFlight = AtomicBoolean(false)
+    private val ocrExecutor = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "OpenFlow-OCR").apply { isDaemon = true }
+    }
+    // Accessed only on ocrExecutor.
+    private var localOcrEngine: LocalOcrEngine? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -164,23 +173,33 @@ class ChatGPTMonitorService : AccessibilityService() {
     }
 
     /**
-     * Probe Android's Accessibility screenshot API at a low rate. Only metadata
-     * is retained; the captured pixels are never saved, OCR'd, or transmitted.
+     * Capture only the official ChatGPT window, run Russian+English OCR locally,
+     * and retain diagnostic signals only. Pixel data and conversation text are
+     * discarded after recognition and never leave the device.
      */
     private fun probeChatGptScreenshot() {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) {
-            state.edit().putString("diag_screenshot_status", "UNSUPPORTED_API")
-                .putLong("diag_screenshot_time", System.currentTimeMillis()).apply()
+            state.edit()
+                .putString("diag_screenshot_status", "UNSUPPORTED_API")
+                .putString("diag_ocr_status", "UNSUPPORTED_API")
+                .putLong("diag_screenshot_time", System.currentTimeMillis())
+                .apply()
             return
         }
+
         val now = System.currentTimeMillis()
-        if (now - lastScreenshotProbeAt < SCREENSHOT_PROBE_INTERVAL_MS) return
+        if (now - lastScreenshotProbeAt < SCREENSHOT_OCR_INTERVAL_MS) return
+        if (!ocrInFlight.compareAndSet(false, true)) return
         lastScreenshotProbeAt = now
-        state.edit().putString("diag_screenshot_status", "REQUESTING")
-            .putLong("diag_screenshot_time", now).apply()
+        state.edit()
+            .putString("diag_screenshot_status", "REQUESTING")
+            .putString("diag_ocr_status", "CAPTURING")
+            .putLong("diag_screenshot_time", now)
+            .apply()
+
         try {
             val callbackExecutor = java.util.concurrent.Executor { command ->
-                handler.post(command)
+                runCatching { ocrExecutor.execute(command) }
             }
             takeScreenshot(
                 android.view.Display.DEFAULT_DISPLAY,
@@ -188,35 +207,87 @@ class ChatGPTMonitorService : AccessibilityService() {
                 object : TakeScreenshotCallback {
                     override fun onSuccess(result: ScreenshotResult) {
                         val buffer = result.hardwareBuffer
+                        var bitmap: Bitmap? = null
                         val width = buffer.width
                         val height = buffer.height
-                        runCatching { buffer.close() }
-                        state.edit()
-                            .putString("diag_screenshot_status", "SUCCESS")
-                            .putInt("diag_screenshot_width", width)
-                            .putInt("diag_screenshot_height", height)
-                            .putInt("diag_screenshot_error", 0)
-                            .putLong("diag_screenshot_time", System.currentTimeMillis())
-                            .apply()
+                        try {
+                            val hardwareBitmap = Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)
+                                ?: throw IllegalStateException("BITMAP_WRAP_FAILED")
+                            try {
+                                bitmap = hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                            } finally {
+                                hardwareBitmap.recycle()
+                            }
+                            val softwareBitmap = bitmap
+                                ?: throw IllegalStateException("BITMAP_COPY_FAILED")
+                            val engine = localOcrEngine
+                                ?: LocalOcrEngine(applicationContext).also { localOcrEngine = it }
+                            val ocr = engine.recognize(softwareBitmap)
+                            handler.post {
+                                ocrInFlight.set(false)
+                                state.edit()
+                                    .putString("diag_screenshot_status", "SUCCESS")
+                                    .putInt("diag_screenshot_width", width)
+                                    .putInt("diag_screenshot_height", height)
+                                    .putInt("diag_screenshot_error", 0)
+                                    .putLong("diag_screenshot_time", System.currentTimeMillis())
+                                    .putString("diag_ocr_status", ocr.status)
+                                    .putInt("diag_ocr_lines", ocr.lineCount)
+                                    .putInt("diag_ocr_words", ocr.wordCount)
+                                    .putInt("diag_ocr_confidence", ocr.meanConfidence)
+                                    .putBoolean("diag_ocr_composer", ocr.hasComposerHint)
+                                    .putBoolean("diag_ocr_send", ocr.hasSendLabel)
+                                    .putBoolean("diag_ocr_stop", ocr.hasStopLabel)
+                                    .putString("diag_ocr_controls", ocr.controlHints.joinToString(" | "))
+                                    .putLong("diag_ocr_duration", ocr.elapsedMs)
+                                    .putString("diag_ocr_error", ocr.errorCode)
+                                    .putLong("diag_ocr_time", System.currentTimeMillis())
+                                    .apply()
+                            }
+                        } catch (error: Throwable) {
+                            val errorName = error.javaClass.simpleName.ifBlank { "OCR_ERROR" }
+                            handler.post {
+                                ocrInFlight.set(false)
+                                state.edit()
+                                    .putString("diag_screenshot_status", "SUCCESS")
+                                    .putInt("diag_screenshot_width", width)
+                                    .putInt("diag_screenshot_height", height)
+                                    .putInt("diag_screenshot_error", 0)
+                                    .putString("diag_ocr_status", "FAILED")
+                                    .putString("diag_ocr_error", errorName.take(64))
+                                    .putLong("diag_ocr_time", System.currentTimeMillis())
+                                    .apply()
+                            }
+                        } finally {
+                            bitmap?.recycle()
+                            runCatching { buffer.close() }
+                        }
                     }
 
                     override fun onFailure(errorCode: Int) {
-                        state.edit()
-                            .putString("diag_screenshot_status", "FAILED")
-                            .putInt("diag_screenshot_error", errorCode)
-                            .putLong("diag_screenshot_time", System.currentTimeMillis())
-                            .apply()
+                        handler.post {
+                            ocrInFlight.set(false)
+                            state.edit()
+                                .putString("diag_screenshot_status", "FAILED")
+                                .putInt("diag_screenshot_error", errorCode)
+                                .putString("diag_ocr_status", "SCREENSHOT_FAILED")
+                                .putString("diag_ocr_error", "SCREENSHOT_ERROR_$errorCode")
+                                .putLong("diag_screenshot_time", System.currentTimeMillis())
+                                .putLong("diag_ocr_time", System.currentTimeMillis())
+                                .apply()
+                        }
                     }
                 }
             )
-        } catch (error: SecurityException) {
-            state.edit().putString("diag_screenshot_status", "SECURITY_EXCEPTION")
-                .putString("diag_screenshot_detail", error.javaClass.simpleName)
-                .putLong("diag_screenshot_time", System.currentTimeMillis()).apply()
         } catch (error: Throwable) {
-            state.edit().putString("diag_screenshot_status", "REQUEST_EXCEPTION")
-                .putString("diag_screenshot_detail", error.javaClass.simpleName)
-                .putLong("diag_screenshot_time", System.currentTimeMillis()).apply()
+            ocrInFlight.set(false)
+            state.edit()
+                .putString("diag_screenshot_status", "REQUEST_EXCEPTION")
+                .putString("diag_ocr_status", "FAILED")
+                .putString("diag_ocr_error", error.javaClass.simpleName.take(64))
+                .putLong("diag_screenshot_time", System.currentTimeMillis())
+                .putLong("diag_ocr_time", System.currentTimeMillis())
+                .apply()
         }
     }
 
@@ -925,6 +996,13 @@ class ChatGPTMonitorService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        runCatching {
+            ocrExecutor.execute {
+                localOcrEngine?.close()
+                localOcrEngine = null
+            }
+            ocrExecutor.shutdown()
+        }
         stableCheck?.let(handler::removeCallbacks)
         stableCheck = null
         cancelSeekLatest()
@@ -942,7 +1020,7 @@ class ChatGPTMonitorService : AccessibilityService() {
     companion object {
         const val CHATGPT_PACKAGE = "com.openai.chatgpt"
         private const val RESPONSE_STABILITY_MS = 2200L
-        private const val SCREENSHOT_PROBE_INTERVAL_MS = 15_000L
+        private const val SCREENSHOT_OCR_INTERVAL_MS = 8_000L
         private const val SCROLL_SETTLE_MS = 650L
         private const val MAX_SCROLL_STEPS = 24
         private const val DEFAULT_LONG_CHAT_THRESHOLD = 36
