@@ -37,6 +37,7 @@ class ChatGPTMonitorService : AccessibilityService() {
     private var lastDiagnosticsPackage: String? = null
     private var lastDiagnosticsWriteAt: Long = 0L
     private var lastUncertainFingerprint: String? = null
+    private var lastScreenshotProbeAt: Long = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -102,6 +103,7 @@ class ChatGPTMonitorService : AccessibilityService() {
             return
         }
         recordChatGptDiagnostics(root)
+        probeChatGptScreenshot()
         // Classification is also collected while automation is paused so the user
         // can diagnose visibility without enabling any automatic actions.
         val snapshot = inspect(root)
@@ -159,6 +161,63 @@ class ChatGPTMonitorService : AccessibilityService() {
             if (candidate.packageName?.toString() == CHATGPT_PACKAGE) return candidate
         }
         return null
+    }
+
+    /**
+     * Probe Android's Accessibility screenshot API at a low rate. Only metadata
+     * is retained; the captured pixels are never saved, OCR'd, or transmitted.
+     */
+    private fun probeChatGptScreenshot() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) {
+            state.edit().putString("diag_screenshot_status", "UNSUPPORTED_API")
+                .putLong("diag_screenshot_time", System.currentTimeMillis()).apply()
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (now - lastScreenshotProbeAt < SCREENSHOT_PROBE_INTERVAL_MS) return
+        lastScreenshotProbeAt = now
+        state.edit().putString("diag_screenshot_status", "REQUESTING")
+            .putLong("diag_screenshot_time", now).apply()
+        try {
+            val callbackExecutor = java.util.concurrent.Executor { command ->
+                handler.post(command)
+            }
+            takeScreenshot(
+                android.view.Display.DEFAULT_DISPLAY,
+                callbackExecutor,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) {
+                        val buffer = result.hardwareBuffer
+                        val width = buffer.width
+                        val height = buffer.height
+                        runCatching { buffer.close() }
+                        state.edit()
+                            .putString("diag_screenshot_status", "SUCCESS")
+                            .putInt("diag_screenshot_width", width)
+                            .putInt("diag_screenshot_height", height)
+                            .putInt("diag_screenshot_error", 0)
+                            .putLong("diag_screenshot_time", System.currentTimeMillis())
+                            .apply()
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        state.edit()
+                            .putString("diag_screenshot_status", "FAILED")
+                            .putInt("diag_screenshot_error", errorCode)
+                            .putLong("diag_screenshot_time", System.currentTimeMillis())
+                            .apply()
+                    }
+                }
+            )
+        } catch (error: SecurityException) {
+            state.edit().putString("diag_screenshot_status", "SECURITY_EXCEPTION")
+                .putString("diag_screenshot_detail", error.javaClass.simpleName)
+                .putLong("diag_screenshot_time", System.currentTimeMillis()).apply()
+        } catch (error: Throwable) {
+            state.edit().putString("diag_screenshot_status", "REQUEST_EXCEPTION")
+                .putString("diag_screenshot_detail", error.javaClass.simpleName)
+                .putLong("diag_screenshot_time", System.currentTimeMillis()).apply()
+        }
     }
 
     private fun inspect(root: AccessibilityNodeInfo): ScreenSnapshot {
@@ -883,6 +942,7 @@ class ChatGPTMonitorService : AccessibilityService() {
     companion object {
         const val CHATGPT_PACKAGE = "com.openai.chatgpt"
         private const val RESPONSE_STABILITY_MS = 2200L
+        private const val SCREENSHOT_PROBE_INTERVAL_MS = 15_000L
         private const val SCROLL_SETTLE_MS = 650L
         private const val MAX_SCROLL_STEPS = 24
         private const val DEFAULT_LONG_CHAT_THRESHOLD = 36
