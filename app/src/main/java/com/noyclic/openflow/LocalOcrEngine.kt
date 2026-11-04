@@ -37,7 +37,13 @@ internal class LocalOcrEngine(context: Context) : AutoCloseable {
             engine.setImage(bitmap)
 
             val lines = ArrayList<OcrTextLine>(80)
+            // Tesseract may return no ResultIterator when the frame has no
+            // recognizable text. Treat it as an empty result, not a crash.
             val iterator = engine.getResultIterator()
+                ?: return OcrEngineResult(
+                    status = "NO_TEXT",
+                    elapsedMs = System.currentTimeMillis() - startedAt
+                )
             try {
                 val level = TessBaseAPI.PageIteratorLevel.RIL_TEXTLINE
                 iterator.begin()
@@ -46,12 +52,14 @@ internal class LocalOcrEngine(context: Context) : AutoCloseable {
                         val text = iterator.getUTF8Text(level)?.trim().orEmpty()
                         if (text.isNotBlank()) {
                             val bounds = iterator.getBoundingRect(level)
-                            lines += OcrTextLine(
-                                text = text,
-                                top = bounds.top,
-                                bottom = bounds.bottom,
-                                confidence = iterator.confidence(level)
-                            )
+                            if (bounds != null) {
+                                lines += OcrTextLine(
+                                    text = text,
+                                    top = bounds.top,
+                                    bottom = bounds.bottom,
+                                    confidence = iterator.confidence(level)
+                                )
+                            }
                         }
                     }
                 } while (iterator.next(level))
