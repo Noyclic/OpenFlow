@@ -15,7 +15,7 @@ val prepareOcrModels = tasks.register("prepareOcrModels") {
         listOf("eng", "rus").forEach { language ->
             val target = File(tessdataDir, "$language.traineddata")
             if (!target.isFile || target.length() < 300_000L) {
-                val temporary = java.io.File(tessdataDir, "$language.traineddata.download")
+                val temporary = File(tessdataDir, "$language.traineddata.download")
                 val connection = URL(
                     "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/$modelRevision/$language.traineddata"
                 ).openConnection().apply {
