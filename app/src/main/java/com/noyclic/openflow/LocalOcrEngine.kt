@@ -36,6 +36,9 @@ internal class LocalOcrEngine(context: Context) : AutoCloseable {
             engine.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO)
             engine.setImage(bitmap)
 
+            // Force Tesseract's recognition pass before requesting its iterator.
+            // Some builds expose a null iterator until text recognition has run.
+            val recognizedText = engine.getUTF8Text().orEmpty()
             val lines = ArrayList<OcrTextLine>(80)
             // Tesseract may return no ResultIterator when the frame has no
             // recognizable text. Treat it as an empty result, not a crash.
